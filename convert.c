@@ -57,13 +57,31 @@ static StructDeclaration *structs = NULL;
 static unsigned n_structs = 0;
 static unsigned n_allocated_structs = 0;
 
+typedef struct {
+    char *name;
+    int value;
+    CXCursor cursor;
+} EnumMember;
+
+typedef struct {
+    EnumMember *entries;
+    unsigned n_entries;
+    unsigned n_allocated_entries;
+    char *name;
+    CXCursor cursor;
+} EnumDeclaration;
+static EnumDeclaration *enums = NULL;
+static unsigned n_enums = 0;
+static unsigned n_allocated_enums = 0;
+
 /* FIXME we're not taking pointers or array sizes into account here,
  * in large part because Libav doesn't use those in combination with
  * typedefs. */
 typedef struct {
     char *proxy;
     char *name;
-    StructDeclaration *decl;
+    StructDeclaration *struct_decl;
+    EnumDeclaration *enum_decl;
     CXCursor cursor;
 } TypedefDeclaration;
 static TypedefDeclaration *typedefs = NULL;
@@ -208,13 +226,14 @@ static enum CXChildVisitResult fill_struct_members(CXCursor cursor,
         } while (0);
 
         clang_disposeString(cstr);
+        clang_disposeTokens(TU, tokens, n_tokens);
     }
 
     return CXChildVisit_Continue;
 }
 
 static void register_struct(const char *str, CXCursor cursor,
-                            StructDeclaration **decl_ptr)
+                            TypedefDeclaration *decl_ptr)
 {
     unsigned n;
     StructDeclaration *decl;
@@ -224,7 +243,7 @@ static void register_struct(const char *str, CXCursor cursor,
             memcmp(&cursor, &structs[n].cursor, sizeof(cursor))) {
             /* already exists */
             if (decl_ptr)
-                *decl_ptr = &structs[n];
+                decl_ptr->struct_decl = &structs[n];
             return;
         }
     }
@@ -250,12 +269,184 @@ static void register_struct(const char *str, CXCursor cursor,
     clang_visitChildren(cursor, fill_struct_members, decl);
 
     if (decl_ptr)
-        *decl_ptr = decl;
+        decl_ptr->struct_decl = decl;
+}
+
+static int arithmetic_expression(int val1, const char *expr, int val2)
+{
+    assert(expr[1] == 0);
+
+    switch (expr[0]) {
+    case '^': return val1 ^ val2;
+    case '|': return val1 | val2;
+    case '&': return val1 & val2;
+    case '+': return val1 + val2;
+    case '-': return val1 - val2;
+    case '*': return val1 * val2;
+    case '/': return val1 / val2;
+    case '%': return val1 % val2;
+    }
+
+    fprintf(stderr, "Unknown arithmetic expression %s\n", expr);
+    exit(1);
+}
+
+static int find_enum_value(const char *str)
+{
+    unsigned n, m;
+
+    for (n = 0; n < n_enums; n++) {
+        for (m = 0; m < enums[n].n_entries; m++) {
+            if (!strcmp(enums[n].entries[m].name, str))
+                return enums[n].entries[m].value;
+        }
+    }
+
+    fprintf(stderr, "Unknown enum value %s\n", str);
+    exit(1);
+}
+
+static enum CXChildVisitResult fill_enum_value(CXCursor cursor,
+                                               CXCursor parent,
+                                               CXClientData client_data)
+{
+    int *ptr = (int *) client_data;
+    CXToken *tokens = 0;
+    unsigned int n_tokens = 0;
+    CXSourceRange range = clang_getCursorExtent(cursor);
+
+    clang_tokenize(TU, range, &tokens, &n_tokens);
+
+    switch (cursor.kind) {
+    case CXCursor_BinaryOperator: {
+        int cache[3] = { 0 };
+        CXString tsp;
+
+        assert(n_tokens == 4);
+        tsp = clang_getTokenSpelling(TU, tokens[1]);
+        clang_visitChildren(cursor, fill_enum_value, cache);
+        assert(cache[0] == 2);
+        ptr[1 + ptr[0]++] = arithmetic_expression(cache[1],
+                                                  clang_getCString(tsp),
+                                                  cache[2]);
+        clang_disposeString(tsp);
+        break;
+    }
+    case CXCursor_IntegerLiteral: {
+        CXString tsp;
+
+        assert(n_tokens == 2);
+        tsp = clang_getTokenSpelling(TU, tokens[0]);
+        ptr[1 + ptr[0]++] = atoi(clang_getCString(tsp));
+        clang_disposeString(tsp);
+        break;
+    }
+    case CXCursor_DeclRefExpr: {
+        CXString tsp;
+
+        assert(n_tokens == 2);
+        tsp = clang_getTokenSpelling(TU, tokens[0]);
+        ptr[1 + ptr[0]++] = find_enum_value(clang_getCString(tsp));
+        clang_disposeString(tsp);
+        break;
+    }
+    default:
+        break;
+    }
+
+    clang_disposeTokens(TU, tokens, n_tokens);
+
+    return CXChildVisit_Continue;
+}
+
+static enum CXChildVisitResult fill_enum_members(CXCursor cursor,
+                                                 CXCursor parent,
+                                                 CXClientData client_data)
+{
+    EnumDeclaration *decl = (EnumDeclaration *) client_data;
+
+    if (cursor.kind == CXCursor_EnumConstantDecl) {
+        CXString cstr = clang_getCursorSpelling(cursor);
+        const char *str = clang_getCString(cstr);
+        unsigned n = decl->n_entries;
+        int cache[3] = { 0 };
+
+        if (decl->n_entries == decl->n_allocated_entries) {
+            unsigned num = decl->n_allocated_entries + 16;
+            void *mem = realloc(decl->entries,
+                                sizeof(*decl->entries) * num);
+            if (!mem) {
+                fprintf(stderr,
+                        "Ran out of memory while declaring field %s in %s\n",
+                        str, decl->name);
+                exit(1);
+            }
+            decl->entries = (EnumMember *) mem;
+            decl->n_allocated_entries = num;
+        }
+
+        decl->entries[n].name = strdup(str);
+        decl->entries[n].cursor = cursor;
+        clang_visitChildren(cursor, fill_enum_value, cache);
+        assert(cache[0] <= 1);
+        if (cache[0] == 1) {
+            decl->entries[n].value = cache[1];
+        } else if (n == 0) {
+            decl->entries[n].value = 0;
+        } else {
+            decl->entries[n].value = decl->entries[n - 1].value + 1;
+        }
+        decl->n_entries++;
+
+        clang_disposeString(cstr);
+    }
+
+    return CXChildVisit_Continue;
+}
+
+static void register_enum(const char *str, CXCursor cursor,
+                          TypedefDeclaration *decl_ptr)
+{
+    unsigned n;
+    EnumDeclaration *decl;
+
+    for (n = 0; n < n_enums; n++) {
+        if (!strcmp(enums[n].name, str) &&
+            memcmp(&cursor, &enums[n].cursor, sizeof(cursor))) {
+            /* already exists */
+            if (decl_ptr)
+                decl_ptr->enum_decl = &enums[n];
+            return;
+        }
+    }
+
+    if (n_enums == n_allocated_enums) {
+        unsigned num = n_allocated_enums + 16;
+        void *mem = realloc(enums, sizeof(*enums) * num);
+        if (!mem) {
+            fprintf(stderr, "Out of memory while registering enum %s\n", str);
+            exit(1);
+        }
+        enums = (EnumDeclaration *) mem;
+        n_allocated_enums = num;
+    }
+
+    decl = &enums[n_enums++];
+    decl->name = strdup(str);
+    decl->cursor = cursor;
+    decl->n_entries = 0;
+    decl->n_allocated_entries = 0;
+    decl->entries = NULL;
+
+    clang_visitChildren(cursor, fill_enum_members, decl);
+
+    if (decl_ptr)
+        decl_ptr->enum_decl = decl;
 }
 
 static void register_typedef(const char *name,
                              CXToken *tokens, unsigned n_tokens,
-                             StructDeclaration *decl, CXCursor cursor)
+                             TypedefDeclaration *decl, CXCursor cursor)
 {
     unsigned n;
 
@@ -273,8 +464,10 @@ static void register_typedef(const char *name,
 
     n = n_typedefs++;
     typedefs[n].name = strdup(name);
-    if (decl) {
-        typedefs[n].decl = decl;
+    if (decl->struct_decl) {
+        typedefs[n].struct_decl = decl->struct_decl;
+    } else if (decl->enum_decl) {
+        typedefs[n].enum_decl = decl->enum_decl;
     } else {
         typedefs[n].proxy = concat_name(tokens, 1, n_tokens - 3);
     }
@@ -303,14 +496,20 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
 
     switch (cursor.kind) {
     case CXCursor_TypedefDecl: {
-        StructDeclaration *decl = NULL;
+        TypedefDeclaration decl;
+        memset(&decl, 0, sizeof(decl));
         clang_visitChildren(cursor, callback, &decl);
-        register_typedef(clang_getCString(str), tokens, n_tokens, decl, cursor);
+        register_typedef(clang_getCString(str), tokens, n_tokens,
+                         &decl, cursor);
         break;
     }
     case CXCursor_StructDecl:
         register_struct(clang_getCString(str), cursor,
-                        (StructDeclaration **) client_data);
+                        (TypedefDeclaration *) client_data);
+        break;
+    case CXCursor_EnumDecl:
+        register_enum(clang_getCString(str), cursor,
+                      (TypedefDeclaration *) client_data);
         break;
     case CXCursor_CompoundLiteralExpr:
         dprintf("Compound literal: %s\n", clang_getCString(str));
@@ -405,25 +604,37 @@ static void cleanup(void)
 {
     unsigned n, m;
 
+#define DEBUG 1
     dprintf("N typedef entries: %d\n", n_typedefs);
     for (n = 0; n < n_typedefs; n++) {
-        if (typedefs[n].decl) {
-            if (typedefs[n].decl->name[0]) {
+        if (typedefs[n].struct_decl) {
+            if (typedefs[n].struct_decl->name[0]) {
                 dprintf("[%d]: %s (struct %s = %p)\n",
                         n, typedefs[n].name,
-                        typedefs[n].decl->name,
-                        typedefs[n].decl);
+                        typedefs[n].struct_decl->name,
+                        typedefs[n].struct_decl);
             } else {
                 dprintf("[%d]: %s (<anonymous> struct = %p)\n",
                         n, typedefs[n].name,
-                        typedefs[n].decl);
+                        typedefs[n].struct_decl);
+            }
+        } else if (typedefs[n].enum_decl) {
+            if (typedefs[n].enum_decl->name[0]) {
+                dprintf("[%d]: %s (enum %s = %p)\n",
+                        n, typedefs[n].name,
+                        typedefs[n].enum_decl->name,
+                        typedefs[n].enum_decl);
+            } else {
+                dprintf("[%d]: %s (<anonymous> enum = %p)\n",
+                        n, typedefs[n].name,
+                        typedefs[n].enum_decl);
             }
         } else {
-            dprintf("[%d]: %s (%s = %p)\n",
-                    n, typedefs[n].name, typedefs[n].proxy, typedefs[n].decl);
-            free(typedefs[n].name);
+            dprintf("[%d]: %s (%s)\n",
+                    n, typedefs[n].name, typedefs[n].proxy);
+            free(typedefs[n].proxy);
         }
-        free(typedefs[n].proxy);
+        free(typedefs[n].name);
     }
     free(typedefs);
 
@@ -448,6 +659,25 @@ static void cleanup(void)
         free(structs[n].name);
     }
     free(structs);
+
+    printf("N enum entires: %d\n", n_enums);
+    for (n = 0; n < n_enums; n++) {
+        if (enums[n].name[0]) {
+            dprintf("[%d]: %s (%p)\n", n, enums[n].name, &enums[n]);
+        } else {
+            dprintf("[%d]: <anonymous> (%p)\n", n, &enums[n]);
+        }
+        for (m = 0; m < enums[n].n_entries; m++) {
+            dprintf(" [%d]: %s = %d\n", m,
+                    enums[n].entries[m].name,
+                    enums[n].entries[m].value);
+            free(enums[n].entries[m].name);
+        }
+        free(enums[n].entries);
+        free(enums[n].name);
+    }
+    free(enums);
+#define DEBUG 0
 }
 
 int main(int argc, char *argv[])

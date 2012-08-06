@@ -23,9 +23,9 @@ enum ColorType {
 };
 
 enum PixelType {
-    PIXEL_PLANAR,
-    PIXEL_PACKED,
-    PIXEL_PALETTE,
+    PIXEL_PLANAR = 2,
+    PIXEL_PACKED = PIXEL_PLANAR + 1,
+    PIXEL_PALETTE = 5,
 };
 
 static const struct PixFmtInfo pix_fmt_info[] = {
