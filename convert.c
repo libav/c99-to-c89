@@ -604,7 +604,7 @@ static void cleanup(void)
 {
     unsigned n, m;
 
-#define DEBUG 1
+#define DEBUG 0
     dprintf("N typedef entries: %d\n", n_typedefs);
     for (n = 0; n < n_typedefs; n++) {
         if (typedefs[n].struct_decl) {
@@ -660,7 +660,7 @@ static void cleanup(void)
     }
     free(structs);
 
-    printf("N enum entires: %d\n", n_enums);
+    dprintf("N enum entries: %d\n", n_enums);
     for (n = 0; n < n_enums; n++) {
         if (enums[n].name[0]) {
             dprintf("[%d]: %s (%p)\n", n, enums[n].name, &enums[n]);
