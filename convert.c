@@ -525,18 +525,46 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
         break;
     case CXCursor_TypeRef:
         if (parent.kind == CXCursor_CompoundLiteralExpr) {
-            //
+            // (type) { val }
+            //  ^^^^
         }
         clang_visitChildren(cursor, callback, 0);
         break;
     case CXCursor_InitListExpr:
         if (parent.kind == CXCursor_CompoundLiteralExpr) {
-            //
+            // (type) { val }
+            //        ^^^^^^^
         }
         clang_visitChildren(cursor, callback, 0);
         break;
+    case CXCursor_UnexposedExpr:
+        if (parent.kind == CXCursor_InitListExpr) {
+            // .member = val,
+            // ^^^^^^^^^^^^^^
+        }
+        clang_visitChildren(cursor, callback, 0);
+        break;
+    case CXCursor_MemberRef:
+        if (parent.kind == CXCursor_UnexposedExpr) {
+            // designated initializer (struct)
+            // .member = val
+            //  ^^^^^^
+            printf("member: %s (parent: %d)\n", clang_getCString(str), parent.kind);
+        }
+        break;
+    case CXCursor_IntegerLiteral:
+    case CXCursor_DeclRefExpr:
+        if (parent.kind == CXCursor_UnexposedExpr) {
+            CXString spelling = clang_getTokenSpelling(TU, tokens[n_tokens - 1]);
+            if (!strcmp(clang_getCString(spelling), "]")) {
+                // [index] = { val }
+                //  ^^^^^
+            }
+            clang_disposeString(spelling);
+        }
+        break;
     default:
-#define DEBUG 0
+#define DEBUG 1
         dprintf("DERP: %d [%d] %s @ %d:%d in %s\n", cursor.kind, parent.kind,
                 clang_getCString(str), line, col,
                 clang_getCString(filename));
