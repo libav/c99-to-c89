@@ -88,6 +88,32 @@ static TypedefDeclaration *typedefs = NULL;
 static unsigned n_typedefs = 0;
 static unsigned n_allocated_typedefs = 0;
 
+enum StructArrayType {
+    TYPE_IRRELEVANT = 0,
+    TYPE_STRUCT     = 1,
+    TYPE_ARRAY      = 2,
+};
+typedef struct {
+    unsigned index;
+    struct {
+        unsigned start, end;
+    } value_offset;
+} StructArrayItem;
+
+typedef struct {
+    enum StructArrayType type;
+    StructDeclaration *str_decl;
+    StructArrayItem *entries;
+    unsigned n_entries;
+    unsigned n_allocated_entries;
+    struct {
+        unsigned start, end;
+    } value_offset;
+} StructArrayList;
+static StructArrayList *struct_array_lists = NULL;
+static unsigned n_struct_array_lists = 0;
+static unsigned n_allocated_struct_array_lists = 0;
+
 static CXTranslationUnit TU;
 
 #define DEBUG 0
@@ -224,6 +250,12 @@ static enum CXChildVisitResult fill_struct_members(CXCursor cursor,
             }
             clang_disposeString(tstr);
         } while (0);
+
+        // FIXME it's not hard to find the struct name (either because
+        // tokens[idx-2-n_ptrs] == 'struct', or because tokens[idx-1-n_ptrs]
+        // is a typedef for the struct name), and then we can use
+        // find_struct_decl() to find the StructDeclaration belonging to
+        // that type.
 
         clang_disposeString(cstr);
         clang_disposeTokens(TU, tokens, n_tokens);
@@ -474,6 +506,144 @@ static void register_typedef(const char *name,
     memcpy(&typedefs[n].cursor, &cursor, sizeof(cursor));
 }
 
+static unsigned get_token_offset(CXToken token)
+{
+    CXSourceLocation l = clang_getTokenLocation(TU, token);
+    CXFile file;
+    unsigned line, col, off;
+
+    clang_getSpellingLocation(l, &file, &line, &col, &off);
+
+    return off;
+}
+
+static StructDeclaration *find_struct_decl_by_name(const char *name)
+{
+    unsigned n;
+
+    for (n = 0; n < n_structs; n++) {
+        if (!strcmp(name, structs[n].name))
+            return &structs[n];
+    }
+
+    return NULL;
+}
+
+static TypedefDeclaration *find_typedef_decl_by_name(const char *name)
+{
+    unsigned n;
+
+    for (n = 0; n < n_typedefs; n++) {
+        if (!strcmp(name, typedefs[n].name))
+            return &typedefs[n];
+    }
+
+    return NULL;
+}
+
+// FIXME this function has some duplicate functionality compared to
+// fill_struct_members() further up.
+static StructDeclaration *find_struct_decl(const char *var, CXToken *tokens,
+                                           unsigned n_tokens)
+{
+    /*
+     * In the list of tokens that make up a sequence like:
+     * 'static const struct str_type name = { val }',
+     * A) find the token that contains 'var', get the type (token before that)
+     * B) check the tokens before that one to see if type is a struct
+     * C) if not, check if the type is a typedef and go back to (B)
+     * D) if type is a struct, return that type's StructDeclaration;
+     *    if type is not a struct and not a typedef, return NULL.
+     */
+    unsigned n, var_tok_idx;
+
+    for (n = 0; n < n_tokens; n++) {
+        CXString spelling = clang_getTokenSpelling(TU, tokens[n]);
+        int res = strcmp(clang_getCString(spelling), var);
+        clang_disposeString(spelling);
+        if (!res)
+            break;
+    }
+    if (n == n_tokens)
+        return NULL;
+
+    // is it a struct?
+    var_tok_idx = n;
+    if (var_tok_idx > 1) {
+        CXString spelling;
+        int res;
+
+        spelling = clang_getTokenSpelling(TU, tokens[var_tok_idx - 2]);
+        res = strcmp(clang_getCString(spelling), "struct");
+        clang_disposeString(spelling);
+
+        if (!res) {
+            StructDeclaration *str_decl;
+
+            spelling = clang_getTokenSpelling(TU, tokens[var_tok_idx - 1]);
+            str_decl = find_struct_decl_by_name(clang_getCString(spelling));
+            clang_disposeString(spelling);
+
+            return str_decl;
+        }
+    }
+
+    // is it a typedef?
+    if (var_tok_idx > 0) {
+        CXString spelling;
+        TypedefDeclaration *td_decl;
+
+        spelling = clang_getTokenSpelling(TU, tokens[var_tok_idx - 1]);
+        td_decl = find_typedef_decl_by_name(clang_getCString(spelling));
+        clang_disposeString(spelling);
+
+        if (td_decl && td_decl->struct_decl)
+            return td_decl->struct_decl;
+    }
+
+    return NULL;
+}
+
+static StructDeclaration *find_encompassing_struct_decl(unsigned start,
+                                                        unsigned end)
+{
+    /*
+     * In previously registered arrays/structs, find one with a start-end
+     * that fully contains the given start/end function arguments. If found,
+     * return that array/struct's type. If not found, return NULL.
+     */
+    unsigned n;
+
+    for (n = 0; n < n_struct_array_lists; n++) {
+        if (start >= struct_array_lists[n].value_offset.start &&
+            end   <= struct_array_lists[n].value_offset.end) {
+            if (struct_array_lists[n].type == TYPE_ARRAY) {
+                return struct_array_lists[n].str_decl;
+            } else if (struct_array_lists[n].type == TYPE_STRUCT) {
+                // FIXME return type of that member
+                return NULL;
+            } else {
+                return NULL;
+            }
+        }
+    }
+
+    return NULL;
+}
+
+static unsigned find_member_index_in_struct(StructDeclaration *str_decl,
+                                            const char *member)
+{
+    unsigned n;
+
+    for (n = 0; n < str_decl->n_entries; n++) {
+        if (!strcmp(str_decl->entries[n].name, member))
+            return n;
+    }
+
+    return -1;
+}
+
 static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
                                         CXClientData client_data)
 {
@@ -481,10 +651,10 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
     CXString str;
     CXSourceRange range;
     CXToken *tokens = 0;
-    unsigned int n_tokens = 0;
+    unsigned n_tokens = 0;
     CXSourceLocation pos;
     CXFile file;
-    unsigned int line, col, off;
+    unsigned line, col, off, i;
     CXString filename;
 
     range = clang_getCursorExtent(cursor);
@@ -511,9 +681,18 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
         register_enum(clang_getCString(str), cursor,
                       (TypedefDeclaration *) client_data);
         break;
+    case CXCursor_VarDecl: {
+        // e.g. static const struct <type> name { val }
+        //      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        const char *name = clang_getCString(str);
+        StructDeclaration *str_decl = find_struct_decl(name, tokens, n_tokens);
+
+        clang_visitChildren(cursor, callback, str_decl);
+        break;
+    }
     case CXCursor_CompoundLiteralExpr:
         dprintf("Compound literal: %s\n", clang_getCString(str));
-        for (unsigned int i = 0; i < n_tokens; i++)
+        for (i = 0; i < n_tokens; i++)
         {
             CXString spelling = clang_getTokenSpelling(TU, tokens[i]);
             CXSourceLocation l = clang_getTokenLocation(TU, tokens[i]);
@@ -534,37 +713,120 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
         if (parent.kind == CXCursor_CompoundLiteralExpr) {
             // (type) { val }
             //        ^^^^^^^
+            clang_visitChildren(cursor, callback, 0);
+            // FIXME implement this
+        } else {
+            // another { val } or { .member = val } or { [index] = val }
+            StructArrayList *l;
+
+            if (n_struct_array_lists == n_allocated_struct_array_lists) {
+                unsigned num = n_allocated_struct_array_lists + 16;
+                void *mem = realloc(struct_array_lists,
+                                    sizeof(*struct_array_lists) * num);
+                if (!mem) {
+                    fprintf(stderr, "Failed to allocate memory for str/arr\n");
+                    exit(1);
+                }
+                struct_array_lists = (StructArrayList *) mem;
+                n_allocated_struct_array_lists = num;
+            }
+            l = &struct_array_lists[n_struct_array_lists++];
+            l->type = TYPE_IRRELEVANT;
+            l->n_entries = l->n_allocated_entries = 0;
+            l->entries = NULL;
+            l->value_offset.start = get_token_offset(tokens[0]);
+            l->value_offset.end   = get_token_offset(tokens[n_tokens - 2]);
+            if (parent.kind == CXCursor_VarDecl) {
+                l->str_decl = (StructDeclaration *) client_data;
+            } else {
+                l->str_decl = find_encompassing_struct_decl(l->value_offset.start,
+                                                            l->value_offset.end);
+            }
+
+            clang_visitChildren(cursor, callback, l);
         }
-        clang_visitChildren(cursor, callback, 0);
         break;
     case CXCursor_UnexposedExpr:
         if (parent.kind == CXCursor_InitListExpr) {
-            // .member = val,
-            // ^^^^^^^^^^^^^^
+            CXString spelling = clang_getTokenSpelling(TU, tokens[0]);
+            const char *istr = clang_getCString(spelling);
+            StructArrayList *l = (StructArrayList *) client_data;
+
+            if (!strcmp(istr, "[") || !strcmp(istr, ".")) {
+                StructArrayItem *sai;
+                enum StructArrayType exp_type = istr[0] == '.' ?
+                                                TYPE_STRUCT : TYPE_ARRAY;
+                // [index] = val   or   .member = val
+                // ^^^^^^^^^^^^^        ^^^^^^^^^^^^^
+                if (l->type == TYPE_IRRELEVANT) {
+                    l->type = exp_type;
+                } else if (l->type != exp_type) {
+                    fprintf(stderr, "Mixed struct/array!\n");
+                    exit(1);
+                }
+
+                if (l->n_entries == l->n_allocated_entries) {
+                    unsigned num = l->n_allocated_entries + 16;
+                    void *mem = realloc(l->entries, sizeof(*l->entries) * num);
+                    if (!mem) {
+                        fprintf(stderr, "Failed to allocate str/arr entry mem\n");
+                        exit(1);
+                    }
+                    l->entries = (StructArrayItem *) mem;
+                    l->n_allocated_entries = num;
+                }
+
+                sai = &l->entries[l->n_entries];
+                sai->index = 0;
+                sai->value_offset.start = get_token_offset(tokens[3 + (istr[0] == '[')]);
+                sai->value_offset.end   = get_token_offset(tokens[n_tokens - 2]);
+                clang_visitChildren(cursor, callback, l);
+                l->n_entries++;
+            } else {
+                clang_visitChildren(cursor, callback, 0);
+            }
+            clang_disposeString(spelling);
+        } else {
+            clang_visitChildren(cursor, callback, 0);
         }
-        clang_visitChildren(cursor, callback, 0);
         break;
     case CXCursor_MemberRef:
         if (parent.kind == CXCursor_UnexposedExpr) {
             // designated initializer (struct)
             // .member = val
             //  ^^^^^^
-            printf("member: %s (parent: %d)\n", clang_getCString(str), parent.kind);
+            StructArrayList *l = (StructArrayList *) client_data;
+            StructArrayItem *sai = &l->entries[l->n_entries];
+            const char *member = clang_getCString(str);
+
+            assert(sai);
+            assert(l->type == TYPE_STRUCT);
+            sai->index = find_member_index_in_struct(l->str_decl, member);
         }
         break;
     case CXCursor_IntegerLiteral:
     case CXCursor_DeclRefExpr:
-        if (parent.kind == CXCursor_UnexposedExpr) {
+    case CXCursor_BinaryOperator:
+        if (parent.kind == CXCursor_UnexposedExpr && client_data) {
             CXString spelling = clang_getTokenSpelling(TU, tokens[n_tokens - 1]);
             if (!strcmp(clang_getCString(spelling), "]")) {
                 // [index] = { val }
                 //  ^^^^^
+                int cache[3] = { 0 };
+                StructArrayList *l = (StructArrayList *) client_data;
+                StructArrayItem *sai = &l->entries[l->n_entries];
+
+                fill_enum_value(cursor, parent, cache);
+                assert(cache[0] == 1);
+                assert(sai);
+                assert(l->type == TYPE_ARRAY);
+                sai->index = cache[1];
             }
             clang_disposeString(spelling);
         }
         break;
     default:
-#define DEBUG 1
+#define DEBUG 0
         dprintf("DERP: %d [%d] %s @ %d:%d in %s\n", cursor.kind, parent.kind,
                 clang_getCString(str), line, col,
                 clang_getCString(filename));
@@ -633,6 +895,26 @@ static void cleanup(void)
     unsigned n, m;
 
 #define DEBUG 0
+    dprintf("N array/struct variables\n");
+    for (n = 0; n < n_struct_array_lists; n++) {
+        dprintf("[%d]: type=%d, struct=%p (%s), n_entries=%d, range=%u-%u\n",
+                n, struct_array_lists[n].type,
+                struct_array_lists[n].str_decl,
+                struct_array_lists[n].str_decl ?
+                    struct_array_lists[n].str_decl->name : "<none>",
+                struct_array_lists[n].n_entries,
+                struct_array_lists[n].value_offset.start,
+                struct_array_lists[n].value_offset.end);
+        for (m = 0; m < struct_array_lists[n].n_entries; m++) {
+            dprintf(" [%d]: idx=%d, range=%u-%u\n",
+                    m, struct_array_lists[n].entries[m].index,
+                    struct_array_lists[n].entries[m].value_offset.start,
+                    struct_array_lists[n].entries[m].value_offset.end);
+        }
+        free(struct_array_lists[n].entries);
+    }
+    free(struct_array_lists);
+
     dprintf("N typedef entries: %d\n", n_typedefs);
     for (n = 0; n < n_typedefs; n++) {
         if (typedefs[n].struct_decl) {
