@@ -498,9 +498,15 @@ static void register_typedef(const char *name,
     typedefs[n].name = strdup(name);
     if (decl->struct_decl) {
         typedefs[n].struct_decl = decl->struct_decl;
+        typedefs[n].proxy = NULL;
+        typedefs[n].enum_decl = NULL;
     } else if (decl->enum_decl) {
         typedefs[n].enum_decl = decl->enum_decl;
+        typedefs[n].struct_decl = NULL;
+        typedefs[n].proxy = NULL;
     } else {
+        typedefs[n].enum_decl = NULL;
+        typedefs[n].struct_decl = NULL;
         typedefs[n].proxy = concat_name(tokens, 1, n_tokens - 3);
     }
     memcpy(&typedefs[n].cursor, &cursor, sizeof(cursor));
