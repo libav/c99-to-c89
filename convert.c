@@ -603,6 +603,10 @@ static StructDeclaration *find_struct_decl(const char *var, CXToken *tokens,
         td_decl = find_typedef_decl_by_name(clang_getCString(spelling));
         clang_disposeString(spelling);
 
+        // FIXME if struct_decl is not set but proxy is, then it may be
+        // a struct typedef declared in advance, whereas the struct itself
+        // was declared separately. In that case, we should find the struct
+        // declaration delayed, e.g. here/now.
         if (td_decl && td_decl->struct_decl)
             return td_decl->struct_decl;
     }
