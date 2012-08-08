@@ -97,13 +97,14 @@ typedef struct {
     unsigned index;
     struct {
         unsigned start, end;
-    } value_offset;
+    } value_offset, expression_offset;
 } StructArrayItem;
 
 typedef struct {
     enum StructArrayType type;
     StructDeclaration *str_decl;
     StructArrayItem *entries;
+    unsigned level;
     unsigned n_entries;
     unsigned n_allocated_entries;
     struct {
@@ -615,7 +616,8 @@ static StructDeclaration *find_struct_decl(const char *var, CXToken *tokens,
 }
 
 static StructDeclaration *find_encompassing_struct_decl(unsigned start,
-                                                        unsigned end)
+                                                        unsigned end,
+                                                        StructArrayList **ptr)
 {
     /*
      * In previously registered arrays/structs, find one with a start-end
@@ -624,10 +626,12 @@ static StructDeclaration *find_encompassing_struct_decl(unsigned start,
      */
     unsigned n;
 
+    *ptr = NULL;
     for (n = 0; n < n_struct_array_lists; n++) {
         if (start >= struct_array_lists[n].value_offset.start &&
             end   <= struct_array_lists[n].value_offset.end) {
             if (struct_array_lists[n].type == TYPE_ARRAY) {
+                *ptr = &struct_array_lists[n];
                 return struct_array_lists[n].str_decl;
             } else if (struct_array_lists[n].type == TYPE_STRUCT) {
                 // FIXME return type of that member
@@ -748,9 +752,13 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
             l->value_offset.end   = get_token_offset(tokens[n_tokens - 2]);
             if (parent.kind == CXCursor_VarDecl) {
                 l->str_decl = (StructDeclaration *) client_data;
+                l->level = 0;
             } else {
+                StructArrayList *parent;
                 l->str_decl = find_encompassing_struct_decl(l->value_offset.start,
-                                                            l->value_offset.end);
+                                                            l->value_offset.end,
+                                                            &parent);
+                l->level = parent ? parent->level + 1 : 0;
             }
 
             clang_visitChildren(cursor, callback, l);
@@ -788,6 +796,8 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
 
                 sai = &l->entries[l->n_entries];
                 sai->index = 0;
+                sai->expression_offset.start = get_token_offset(tokens[0]);
+                sai->expression_offset.end   = get_token_offset(tokens[n_tokens - 2]);
                 sai->value_offset.start = get_token_offset(tokens[3 + (istr[0] == '[')]);
                 sai->value_offset.end   = get_token_offset(tokens[n_tokens - 2]);
                 clang_visitChildren(cursor, callback, l);
@@ -860,40 +870,175 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
     return CXChildVisit_Continue;
 }
 
+static void get_token_position(CXToken token, unsigned *lnum,
+                               unsigned *pos, unsigned *off)
+{
+    CXFile file;
+    CXSourceLocation l = clang_getTokenLocation(TU, token);
+    clang_getSpellingLocation(l, &file, lnum, pos, off);
+
+    // clang starts counting at 1 for some reason
+    (*lnum)--;
+    (*pos)--;
+}
+
+static void indent_for_token(CXToken token, unsigned *lnum,
+                             unsigned *pos, unsigned *off)
+{
+    unsigned l, p;
+    get_token_position(token, &l, &p, off);
+    for (; *lnum < l; (*lnum)++, *pos = 0)
+        printf("\n");
+    for (; *pos < p; (*pos)++)
+        printf(" ");
+}
+
+static void print_token(CXToken token, unsigned *lnum,
+                        unsigned *pos)
+{
+    CXString s = clang_getTokenSpelling(TU, token);
+    const char *str = clang_getCString(s);
+    printf("%s", str);
+    (*pos) += strlen(str);
+    clang_disposeString(s);
+}
+
+static unsigned find_token_for_offset(CXToken *tokens, unsigned n_tokens,
+                                      unsigned n, unsigned off)
+{
+    for (; n < n_tokens; n++) {
+        unsigned l, p, o;
+        get_token_position(tokens[n], &l, &p, &o);
+        if (o == off)
+            return n;
+    }
+
+    abort();
+}
+
+static unsigned find_value_index(StructArrayList *l, unsigned i)
+{
+    unsigned n;
+
+    for (n = 0; n < l->n_entries; n++) {
+        if (l->entries[n].index == i)
+            return n;
+    }
+
+    return -1;
+}
+
+static int find_index_for_level(unsigned level, unsigned index,
+                                unsigned start)
+{
+    unsigned n, cnt = 0;
+
+    for (n = start; n < n_struct_array_lists; n++) {
+        if (struct_array_lists[n].level < level) {
+            return n_struct_array_lists;
+        } else if (struct_array_lists[n].level == level) {
+            if (cnt++ == index)
+                return n;
+        }
+    }
+
+    return n_struct_array_lists;
+}
+
+static void replace_struct_array(unsigned *_saidx, unsigned *lnum,
+                                 unsigned *cpos, unsigned *_n,
+                                 CXToken *tokens, unsigned n_tokens)
+{
+    unsigned saidx = *_saidx, off, i, n = *_n, j;
+
+    // we assume here the indenting for the first opening token,
+    // i.e. the '{', is already taken care of
+    print_token(tokens[n++], lnum, cpos);
+
+    for (j = 0, i = 0; i < struct_array_lists[saidx].n_entries; j++) {
+        unsigned expr_off_s = struct_array_lists[saidx].entries[i].expression_offset.start;
+        unsigned expr_off_e = struct_array_lists[saidx].entries[i].expression_offset.end;
+        unsigned val_idx = find_value_index(&struct_array_lists[saidx], j);
+        // FIXME this doesn't work if i == 0
+        // the proper solution for that is to indent before, then print the
+        // value + inter-value tokens or this placeholder + comma
+        if (val_idx == -1) {
+            printf(",");
+            if (saidx < n_struct_array_lists - 1 &&
+                struct_array_lists[saidx + 1].level > struct_array_lists[saidx].level) {
+                printf("{}");
+            } else {
+                printf("0");
+            }
+            continue; // gap
+        }
+        unsigned val_off_s = struct_array_lists[saidx].entries[val_idx].value_offset.start;
+        unsigned val_off_e = struct_array_lists[saidx].entries[val_idx].value_offset.end;
+        unsigned indent_token_end = find_token_for_offset(tokens, n_tokens, *_n, expr_off_s);
+        unsigned next_indent_token_start = find_token_for_offset(tokens, n_tokens, *_n,
+                                                                 expr_off_e);
+        unsigned val_token_start = find_token_for_offset(tokens, n_tokens, *_n, val_off_s);
+        unsigned val_token_end = find_token_for_offset(tokens, n_tokens, *_n, val_off_e);
+        int saidx2 = find_index_for_level(struct_array_lists[saidx].level + 1,
+                                          val_idx, saidx + 1);
+
+        // indent as if we were in order
+        for (; n <= indent_token_end; n++) {
+            indent_for_token(tokens[n], lnum, cpos, &off);
+            if (n != indent_token_end)
+                print_token(tokens[n], lnum, cpos);
+        }
+
+        // adjust position
+        get_token_position(tokens[val_token_start], lnum, cpos, &off);
+
+        // print values out of order
+        for (n = val_token_start; n <= val_token_end; n++) {
+            if (saidx2 < n_struct_array_lists &&
+                off == struct_array_lists[saidx2].value_offset.start) {
+                replace_struct_array(&saidx2, lnum, cpos, &n,
+                                     tokens, n_tokens);
+            } else {
+                print_token(tokens[n], lnum, cpos);
+            }
+            if (n != val_token_end)
+                indent_for_token(tokens[n + 1], lnum, cpos, &off);
+        }
+
+        // adjust token index and position back
+        n = next_indent_token_start;
+        get_token_position(tokens[n], lnum, cpos, &off);
+        CXString spelling = clang_getTokenSpelling(TU, tokens[n]);
+        (*cpos) += strlen(clang_getCString(spelling));
+        clang_disposeString(spelling);
+        n++;
+        i++;
+    }
+
+    // update *saidx
+    *_saidx = find_index_for_level(struct_array_lists[saidx].level, 1, saidx);
+
+    // print '}' closing token
+    n = find_token_for_offset(tokens, n_tokens, *_n,
+                              struct_array_lists[saidx].value_offset.end);
+    indent_for_token(tokens[n], lnum, cpos, &off);
+    print_token(tokens[n], lnum, cpos);
+    *_n = n;
+}
+
 static void print_tokens(CXToken *tokens, unsigned n_tokens)
 {
-    unsigned cpos = 0, lnum = 0, n;
+    unsigned cpos = 0, lnum = 0, n, saidx = 0, off;
 
     for (n = 0; n < n_tokens; n++) {
-        CXToken *tok = &tokens[n];
-        CXString spelling = clang_getTokenSpelling(TU, tokens[n]);
-        CXSourceLocation l = clang_getTokenLocation(TU, tokens[n]);
-        CXFile file;
-        unsigned line, col, off;
-        const char *cstr;
-
-        // get position of token
-        clang_getSpellingLocation(l, &file, &line, &col, &off);
-        col--; line--; // somehow counting starts at 1 in clang
-        assert(line >= lnum);
-
-        // add newlines where necessary
-        for (; lnum < line; lnum++) {
-            printf("\n");
-            cpos = 0;
+        indent_for_token(tokens[n], &lnum, &cpos, &off);
+        if (saidx < n_struct_array_lists &&
+            off == struct_array_lists[saidx].value_offset.start) {
+            replace_struct_array(&saidx, &lnum, &cpos, &n,
+                                 tokens, n_tokens);
+        } else {
+            print_token(tokens[n], &lnum, &cpos);
         }
-
-        // add indenting where necessary
-        for (; cpos < col; cpos++) {
-            printf(" ");
-        }
-
-        // print token
-        cstr = clang_getCString(spelling);
-        printf("%s", cstr);
-        cpos += strlen(cstr);
-
-        clang_disposeString(spelling);
     }
 
     // each file ends with a newline
@@ -907,11 +1052,12 @@ static void cleanup(void)
 #define DEBUG 0
     dprintf("N array/struct variables\n");
     for (n = 0; n < n_struct_array_lists; n++) {
-        dprintf("[%d]: type=%d, struct=%p (%s), n_entries=%d, range=%u-%u\n",
+        dprintf("[%d]: type=%d, struct=%p (%s), level=%d, n_entries=%d, range=%u-%u\n",
                 n, struct_array_lists[n].type,
                 struct_array_lists[n].str_decl,
                 struct_array_lists[n].str_decl ?
                     struct_array_lists[n].str_decl->name : "<none>",
+                struct_array_lists[n].level,
                 struct_array_lists[n].n_entries,
                 struct_array_lists[n].value_offset.start,
                 struct_array_lists[n].value_offset.end);

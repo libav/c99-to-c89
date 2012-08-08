@@ -12,6 +12,7 @@ enum PixelFormat {
     PIX_FMT_YUVJ420P,
     PIX_FMT_RGB24,
     PIX_FMT_RGBA,
+    PIX_FMT_DUMMY,
     PIX_FMT_GRAY8,
 };
 
