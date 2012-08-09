@@ -920,9 +920,13 @@ static unsigned find_value_index(StructArrayList *l, unsigned i)
 {
     unsigned n;
 
-    for (n = 0; n < l->n_entries; n++) {
-        if (l->entries[n].index == i)
-            return n;
+    if (l->type == TYPE_IRRELEVANT) {
+        return i;
+    } else {
+        for (n = 0; n < l->n_entries; n++) {
+            if (l->entries[n].index == i)
+                return n;
+        }
     }
 
     return -1;
@@ -1034,8 +1038,14 @@ static void print_tokens(CXToken *tokens, unsigned n_tokens)
         indent_for_token(tokens[n], &lnum, &cpos, &off);
         if (saidx < n_struct_array_lists &&
             off == struct_array_lists[saidx].value_offset.start) {
-            replace_struct_array(&saidx, &lnum, &cpos, &n,
-                                 tokens, n_tokens);
+            if (struct_array_lists[saidx].type == TYPE_IRRELEVANT ||
+                struct_array_lists[saidx].n_entries == 0) {
+                saidx++;
+                print_token(tokens[n], &lnum, &cpos);
+            } else {
+                replace_struct_array(&saidx, &lnum, &cpos, &n,
+                                     tokens, n_tokens);
+            }
         } else {
             print_token(tokens[n], &lnum, &cpos);
         }
