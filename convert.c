@@ -678,7 +678,7 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
     clang_getSpellingLocation(pos, &file, &line, &col, &off);
     filename = clang_getFileName(file);
 
-#define DEBUG 1
+#define DEBUG 0
     dprintf("DERP: %d [%d] %s @ %d:%d in %s\n", cursor.kind, parent.kind,
             clang_getCString(str), line, col,
             clang_getCString(filename));
