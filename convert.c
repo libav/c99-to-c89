@@ -838,6 +838,7 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
         }
         break;
     case CXCursor_UnexposedExpr:
+            printf("UNEXP: parent=%d\n", parent.kind);
         if (parent.kind == CXCursor_InitListExpr) {
             CXString spelling = clang_getTokenSpelling(TU, tokens[0]);
             const char *istr = clang_getCString(spelling);
@@ -992,8 +993,8 @@ static unsigned find_value_index(StructArrayList *l, unsigned i)
     return -1;
 }
 
-static int find_index_for_level(unsigned level, unsigned index,
-                                unsigned start)
+static unsigned find_index_for_level(unsigned level, unsigned index,
+                                     unsigned start)
 {
     unsigned n, cnt = 0;
 
@@ -1043,8 +1044,8 @@ static void replace_struct_array(unsigned *_saidx, unsigned *lnum,
                                                                  expr_off_e);
         unsigned val_token_start = find_token_for_offset(tokens, n_tokens, *_n, val_off_s);
         unsigned val_token_end = find_token_for_offset(tokens, n_tokens, *_n, val_off_e);
-        int saidx2 = find_index_for_level(struct_array_lists[saidx].level + 1,
-                                          val_idx, saidx + 1);
+        unsigned saidx2 = find_index_for_level(struct_array_lists[saidx].level + 1,
+                                               val_idx, saidx + 1);
 
         // indent as if we were in order
         for (; n <= indent_token_end; n++) {
