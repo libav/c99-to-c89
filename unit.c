@@ -11,7 +11,7 @@ typedef struct { int num, den; struct AVRational test; } AVRational3;
 static AVRational call_function_2(AVRational x)
 {
     AVRational y = (struct AVRational) { x.den, x.num };
-    x = (AVRational) { x.den, x.num };
+    x = (AVRational) { y.den, y.num };
     return x.num > 0 ? (AVRational) { x.num, x.den } :
            x.den > 0 ? (AVRational) { x.den, x.num } :
                        (AVRational) { 0, 0 };
@@ -38,8 +38,8 @@ int main(int argc, char *argv[])
 {
     int var;
 
-#define X 1
-    call_function((AVRational){1, 2});
+#define X 3
+    call_function((AVRational){2, 2});
     var = ((int[2]){1,2})[argc];
     var = call_function((AVRational){1, 2});
     if (var == 0) return call_function((AVRational){X, 2});
