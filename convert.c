@@ -71,8 +71,8 @@
  *     val1, 0,
  *     val3,
  *   }
- * (assuming val1 is the first value and val3 is the third value in
- * e.g. an enum, and in between these two is a value val2 which is
+ * (assuming index1 is the first value and index3 is the third value
+ * in an enum, and in between these two is a value index2 which is
  * not used in this designated initializer expression. If the values
  * themselves are structs, we use {} instead of 0 as a gap filler.
  */
