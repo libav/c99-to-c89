@@ -36,6 +36,45 @@
  * of the statements in the same context needs to be within the
  * brackets, otherwise the resulting code could contain mixed
  * variable declarations and statements, which c89 does not allow.
+ *
+ * Like for compound literals, c89 does not support designated
+ * initializers, thus we attempt to replace them. The basic idea
+ * is to parse the layout of structs and enums, and then to parse
+ * expressions like:
+ *   {
+ *     [index1] = val1,
+ *     [index2] = val2,
+ *   }
+ * or
+ *   {
+ *     .member1 = val1,
+ *     .member2 = val2,
+ *   }
+ * and convert these to ordered struct/array initializers without
+ * designation, i.e.:
+ *   {
+ *     val1,
+ *     val2,
+ *   }
+ * Note that in cases where the indexes or members are not ordered,
+ * i.e. their order in the struct (for members) is different from
+ * the order of initialization in the expression, or their numeric
+ * values are not linearly ascending in the same way as they are
+ * presented in the expression, then we have to reorder the expressions
+ * and, in some cases, insert gap fillers. For example,
+ *   {
+ *     [index3] = val3,
+ *     [index1] = val1,
+ *   }
+ * becomes
+ *   {
+ *     val1, 0,
+ *     val3,
+ *   }
+ * (assuming val1 is the first value and val3 is the third value in
+ * e.g. an enum, and in between these two is a value val2 which is
+ * not used in this designated initializer expression. If the values
+ * themselves are structs, we use {} instead of 0 as a gap filler.
  */
 
 typedef struct {
