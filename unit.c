@@ -17,12 +17,23 @@ static AVRational call_function_2(AVRational x)
                        (AVRational) { 0, 0 };
 }
 
+static int call_function_3(AVRational x)
+{
+    return x.num ^ x.den;
+}
+
 static int call_function(AVRational x)
 {
     AVRational y = x.num > 0 ? call_function_2((AVRational) { x.num, x.den }) :
                    x.den > 0 ? call_function_2((AVRational) { x.den, x.num }) :
                                call_function_2((AVRational) { 0, 0 });
-    return call_function_2(x).den;
+    int res;
+
+    if ((res = call_function_3((AVRational) { 5, -5 }) > 0)) {
+        return call_function_2(x).den;
+    } else {
+        return res;
+    }
 }
 
 #define lut_vals(x) x, x+1, x+2, x+3
