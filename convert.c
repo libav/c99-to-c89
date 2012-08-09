@@ -763,6 +763,14 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
                 clang_getCString(str), parent.kind);
         clang_visitChildren(cursor, callback, 0);
         break;
+    case CXCursor_ParenExpr:
+        dprintf("Parenthesis - parent=%d\n", parent.kind);
+        clang_visitChildren(cursor, callback, 0);
+        break;
+    case CXCursor_CallExpr:
+        dprintf("Call - parent=%d\n", parent.kind);
+        clang_visitChildren(cursor, callback, 0);
+        break;
     case CXCursor_TypeRef:
         if (parent.kind == CXCursor_CompoundLiteralExpr) {
             // (type) { val }
