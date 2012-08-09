@@ -682,7 +682,7 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
     dprintf("DERP: %d [%d] %s @ %d:%d in %s\n", cursor.kind, parent.kind,
             clang_getCString(str), line, col,
             clang_getCString(filename));
-    for (unsigned int i = 0; i < n_tokens; i++)
+    for (i = 0; i < n_tokens; i++)
     {
         CXString spelling = clang_getTokenSpelling(TU, tokens[i]);
         CXSourceLocation l = clang_getTokenLocation(TU, tokens[i]);
