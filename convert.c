@@ -720,7 +720,8 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
     }
     case CXCursor_CompoundLiteralExpr:
 #define DEBUG 1
-        dprintf("Compound literal: %s\n", clang_getCString(str));
+        dprintf("Compound literal: %s [parent=%d]\n",
+                clang_getCString(str), parent.kind);
         clang_visitChildren(cursor, callback, 0);
         break;
     case CXCursor_TypeRef:
@@ -1171,7 +1172,7 @@ static void cleanup(void)
 int main(int argc, char *argv[])
 {
     CXIndex index;
-    unsigned i, n_tokens;
+    unsigned n_tokens;
     CXToken *tokens;
     CXSourceRange range;
     CXCursor cursor;
@@ -1182,19 +1183,6 @@ int main(int argc, char *argv[])
     cursor = clang_getTranslationUnitCursor(TU);
     range  = clang_getCursorExtent(cursor);
     clang_tokenize(TU, range, &tokens, &n_tokens);
-    for (i = 0; i < n_tokens; i++)
-    {
-#define DEBUG 0
-        CXString spelling = clang_getTokenSpelling(TU, tokens[i]);
-        CXSourceLocation l = clang_getTokenLocation(TU, tokens[i]);
-        CXFile file;
-        unsigned line, col, off;
-
-        clang_getSpellingLocation(l, &file, &line, &col, &off);
-        dprintf("token = '%s' @ %d:%d\n", clang_getCString(spelling), line, col);
-        clang_disposeString(spelling);
-#define DEBUG 0
-    }
 
     clang_visitChildren(cursor, callback, 0);
     print_tokens(tokens, n_tokens);
