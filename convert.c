@@ -759,6 +759,15 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
                                                             l->value_offset.end,
                                                             &parent);
                 l->level = parent ? parent->level + 1 : 0;
+
+                // FIXME if needed, if the parent is an InitListExpr also,
+                // here we could increment the parent l->n_entries to keep
+                // track of the number (and in case of struct: type) of each
+                // of the children nodes.
+                //
+                // E.g. { var, { var2, var3 }, var4 }
+                //      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ <- parent
+                //             ^^^^^^^^^^^^^^         <- cursor
             }
 
             clang_visitChildren(cursor, callback, l);
