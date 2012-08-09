@@ -719,6 +719,7 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
         break;
     }
     case CXCursor_CompoundLiteralExpr:
+#define DEBUG 1
         dprintf("Compound literal: %s\n", clang_getCString(str));
         clang_visitChildren(cursor, callback, 0);
         break;
@@ -736,6 +737,14 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
             //        ^^^^^^^
             clang_visitChildren(cursor, callback, 0);
             // FIXME implement this
+            dprintf("Value: '");
+            for (i = 0; i < n_tokens - 1; i++) {
+                CXString spelling = clang_getTokenSpelling(TU, tokens[i]);
+                dprintf("%s", clang_getCString(spelling));
+                clang_disposeString(spelling);
+            }
+            dprintf("'\n");
+#define DEBUG 0
         } else {
             // another { val } or { .member = val } or { [index] = val }
             StructArrayList *l;
