@@ -678,6 +678,20 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
     clang_getSpellingLocation(pos, &file, &line, &col, &off);
     filename = clang_getFileName(file);
 
+#define DEBUG 1
+    dprintf("DERP: %d [%d] %s @ %d:%d in %s\n", cursor.kind, parent.kind,
+            clang_getCString(str), line, col,
+            clang_getCString(filename));
+    for (unsigned int i = 0; i < n_tokens; i++)
+    {
+        CXString spelling = clang_getTokenSpelling(TU, tokens[i]);
+        CXSourceLocation l = clang_getTokenLocation(TU, tokens[i]);
+        clang_getSpellingLocation(l, &file, &line, &col, &off);
+        dprintf("token = '%s' @ %d:%d\n", clang_getCString(spelling), line, col);
+        clang_disposeString(spelling);
+    }
+#define DEBUG 0
+
     switch (cursor.kind) {
     case CXCursor_TypedefDecl: {
         TypedefDeclaration decl;
@@ -706,20 +720,13 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
     }
     case CXCursor_CompoundLiteralExpr:
         dprintf("Compound literal: %s\n", clang_getCString(str));
-        for (i = 0; i < n_tokens; i++)
-        {
-            CXString spelling = clang_getTokenSpelling(TU, tokens[i]);
-            CXSourceLocation l = clang_getTokenLocation(TU, tokens[i]);
-            clang_getSpellingLocation(l, &file, &line, &col, &off);
-            dprintf("token = '%s' @ %d:%d\n", clang_getCString(spelling), line, col);
-            clang_disposeString(spelling);
-        }
         clang_visitChildren(cursor, callback, 0);
         break;
     case CXCursor_TypeRef:
         if (parent.kind == CXCursor_CompoundLiteralExpr) {
             // (type) { val }
             //  ^^^^
+            dprintf("Type: %s\n", clang_getCString(str));
         }
         clang_visitChildren(cursor, callback, 0);
         break;
@@ -852,24 +859,11 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
                 sai->index = cache[1];
             }
             clang_disposeString(spelling);
-        }
-        break;
+        } else if (cursor.kind != CXCursor_BinaryOperator)
+            break;
     default:
-#define DEBUG 0
-        dprintf("DERP: %d [%d] %s @ %d:%d in %s\n", cursor.kind, parent.kind,
-                clang_getCString(str), line, col,
-                clang_getCString(filename));
-        for (unsigned int i = 0; i < n_tokens; i++)
-        {
-            CXString spelling = clang_getTokenSpelling(TU, tokens[i]);
-            CXSourceLocation l = clang_getTokenLocation(TU, tokens[i]);
-            clang_getSpellingLocation(l, &file, &line, &col, &off);
-            dprintf("token = '%s' @ %d:%d\n", clang_getCString(spelling), line, col);
-            clang_disposeString(spelling);
-        }
         clang_visitChildren(cursor, callback, 0);
         break;
-#define DEBUG 0
     }
 
     clang_disposeString(str);
