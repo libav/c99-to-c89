@@ -725,11 +725,7 @@ typedef struct {
     struct {
         unsigned start, end; // to get the values
     } value_token, cast_token;
-    union {
-        struct {
-            unsigned assign_start;
-        } t_a; // for TYPE_TEMP_ASSIGN
-    } data;
+    unsigned context_start;
     StructDeclaration *str_decl; // struct type
 } CompoundLiteralList;
 static CompoundLiteralList *comp_literal_lists = NULL;
@@ -771,10 +767,11 @@ static void analyze_compound_literal_lineage(CompoundLiteralList *l,
 
     if (rec->kind == CXCursor_VarDecl) {
         l->type = TYPE_OMIT_CAST;
+        l->context_start = l->cast_token.start;
     } else if (rec->kind == CXCursor_BinaryOperator ||
                rec->kind == CXCursor_ReturnStmt) {
         l->type = TYPE_TEMP_ASSIGN;
-        l->data.t_a.assign_start = get_token_offset(rec->tokens[0]);
+        l->context_start = get_token_offset(rec->tokens[0]);
     }
 }
 
@@ -1050,13 +1047,18 @@ static void indent_for_token(CXToken token, unsigned *lnum,
         printf(" ");
 }
 
+static void print_literal_text(const char *str, unsigned *lnum,
+                               unsigned *pos)
+{
+    printf("%s", str);
+    (*pos) += strlen(str);
+}
+
 static void print_token(CXToken token, unsigned *lnum,
                         unsigned *pos)
 {
     CXString s = clang_getTokenSpelling(TU, token);
-    const char *str = clang_getCString(s);
-    printf("%s", str);
-    (*pos) += strlen(str);
+    print_literal_text(clang_getCString(s), lnum, pos);
     clang_disposeString(s);
 }
 
@@ -1124,12 +1126,12 @@ static void replace_struct_array(unsigned *_saidx, unsigned *lnum,
         // the proper solution for that is to indent before, then print the
         // value + inter-value tokens or this placeholder + comma
         if (val_idx == -1) {
-            printf(",");
+            print_literal_text(",", lnum, cpos);
             if (saidx < n_struct_array_lists - 1 &&
                 struct_array_lists[saidx + 1].level > struct_array_lists[saidx].level) {
-                printf("{}");
+                print_literal_text("{}", lnum, cpos);
             } else {
-                printf("0");
+                print_literal_text("0", lnum, cpos);
             }
             continue; // gap
         }
@@ -1187,9 +1189,58 @@ static void replace_struct_array(unsigned *_saidx, unsigned *lnum,
     *_n = n;
 }
 
+static void replace_comp_literal(CompoundLiteralList *l, unsigned *lnum,
+                                 unsigned *cpos, unsigned *_n,
+                                 CXToken *tokens, unsigned n_tokens)
+{
+    if (l->type == TYPE_OMIT_CAST) {
+        unsigned off;
+
+        *_n = find_token_for_offset(tokens, n_tokens, *_n,
+                                    l->cast_token.end);
+        get_token_position(tokens[*_n + 1], lnum, cpos, &off);
+    } else if (l->type == TYPE_TEMP_ASSIGN) {
+        unsigned n, idx1, idx2, off;
+
+        print_literal_text("{ ", lnum, cpos);
+        idx1 = find_token_for_offset(tokens, n_tokens, *_n,
+                                     l->cast_token.start);
+        idx2 = find_token_for_offset(tokens, n_tokens, *_n,
+                                     l->cast_token.end);
+        for (n = idx1 + 1; n < idx2; n++) {
+            print_token(tokens[n], lnum, cpos);
+            print_literal_text(" ", lnum, cpos);
+        }
+        print_literal_text("tmp__ = ", lnum, cpos);
+        idx1 = find_token_for_offset(tokens, n_tokens, *_n,
+                                     l->value_token.start);
+        idx2 = find_token_for_offset(tokens, n_tokens, *_n,
+                                     l->value_token.end);
+        get_token_position(tokens[idx1], lnum, cpos, &off);
+        for (n = idx1; n <= idx2; n++) {
+            indent_for_token(tokens[n], lnum, cpos, &off);
+            print_token(tokens[n], lnum, cpos);
+        }
+        print_literal_text("; ", lnum, cpos);
+        idx1 = find_token_for_offset(tokens, n_tokens, *_n,
+                                     l->context_start);
+        idx2 = find_token_for_offset(tokens, n_tokens, *_n,
+                                     l->cast_token.start);
+        for (n = idx1; n < idx2; n++) {
+            print_token(tokens[n], lnum, cpos);
+            print_literal_text(" ", lnum, cpos);
+        }
+        print_literal_text("tmp__; }", lnum, cpos);
+
+        *_n = find_token_for_offset(tokens, n_tokens, *_n,
+                                    l->value_token.end) + 1;
+        get_token_position(tokens[*_n], lnum, cpos, &off);
+}
+}
+
 static void print_tokens(CXToken *tokens, unsigned n_tokens)
 {
-    unsigned cpos = 0, lnum = 0, n, saidx = 0, off;
+    unsigned cpos = 0, lnum = 0, n, saidx = 0, off, clidx = 0;
 
     for (n = 0; n < n_tokens; n++) {
         indent_for_token(tokens[n], &lnum, &cpos, &off);
@@ -1203,6 +1254,16 @@ static void print_tokens(CXToken *tokens, unsigned n_tokens)
                 replace_struct_array(&saidx, &lnum, &cpos, &n,
                                      tokens, n_tokens);
             }
+        } else if (clidx < n_comp_literal_lists &&
+                   off == comp_literal_lists[clidx].context_start) {
+            if (comp_literal_lists[clidx].type == TYPE_UNKNOWN) {
+                print_token(tokens[n], &lnum, &cpos);
+            } else {
+                replace_comp_literal(&comp_literal_lists[clidx],
+                                     &lnum, &cpos, &n,
+                                     tokens, n_tokens);
+            }
+            clidx++;
         } else {
             print_token(tokens[n], &lnum, &cpos);
         }
