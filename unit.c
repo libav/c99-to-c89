@@ -34,7 +34,7 @@ static int call_function(AVRational x)
     int res;
 
     if ((res = call_function_3((AVRational) { 5, -5 }) > 0)) {
-        return call_function_2(x).den;
+        return ((AVRational) { -8, 8 }).den;
     } else
         return call_function_3((AVRational) { -5, 5 });
 }

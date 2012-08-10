@@ -740,6 +740,7 @@ typedef struct CursorRecursion CursorRecursion;
 struct CursorRecursion {
     enum CXCursorKind kind;
     CursorRecursion *parent;
+    unsigned child_cntr;
     CXToken *tokens;
     unsigned n_tokens;
     union {
@@ -760,7 +761,7 @@ static void analyze_compound_literal_lineage(CompoundLiteralList *l,
 #define DEBUG 0
     dprintf("CL lineage: ");
     do {
-        dprintf("%d, ", p->kind);
+        dprintf("%d[%d], ", p->kind, p->child_cntr);
     } while ((p = p->parent));
     dprintf("\n");
 #define DEBUG 0
@@ -796,9 +797,10 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
     clang_getSpellingLocation(pos, &file, &line, &col, &off);
     filename = clang_getFileName(file);
 
+    memset(&rec, 0, sizeof(rec));
     rec.kind = cursor.kind;
-    rec.data.opaque = NULL;
     rec.parent = (CursorRecursion *) client_data;
+    rec.parent->child_cntr++;
     rec.tokens = tokens;
     rec.n_tokens = n_tokens;
 
@@ -1402,11 +1404,10 @@ int main(int argc, char *argv[])
     range  = clang_getCursorExtent(cursor);
     clang_tokenize(TU, range, &tokens, &n_tokens);
 
+    memset(&rec, 0, sizeof(rec));
     rec.tokens = tokens;
     rec.n_tokens = n_tokens;
     rec.kind = CXCursor_TranslationUnit;
-    rec.parent = NULL;
-    rec.data.opaque = NULL;
     clang_visitChildren(cursor, callback, &rec);
     print_tokens(tokens, n_tokens);
     clang_disposeTokens(TU, tokens, n_tokens);
