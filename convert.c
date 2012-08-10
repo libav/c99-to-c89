@@ -718,6 +718,9 @@ enum CLType {
     TYPE_TEMP_ASSIGN,   // AVRational x; [..] x = (AVRational) { y, z }
                         // -> [..] { AVRational tmp = { y, z }; x = tmp; }
                         // can also be used for return
+    TYPE_CONST_DECL,    // anything with a const that can be statically
+                        // declared, e.g. x = ((const int[]){ y, z })[0] ->
+                        // static const int tmp[] = { y, z } [..] x = tmp[0]
 };
 
 typedef struct {
@@ -753,6 +756,26 @@ struct CursorRecursion {
     } data;
 };
 
+static int is_const(CompoundLiteralList *l, CursorRecursion *rec)
+{
+    unsigned n;
+
+    for (n = 0; n < rec->n_tokens; n++) {
+        unsigned off = get_token_offset(rec->tokens[n]);
+
+        if (off > l->cast_token.start && off < l->cast_token.end) {
+            CXString spelling = clang_getTokenSpelling(TU, rec->tokens[n]);
+            int res = strcmp(clang_getCString(spelling), "const");
+            clang_disposeString(spelling);
+            if (!res)
+                return 1;
+        } else if (off >= l->cast_token.end)
+            break;
+    }
+
+    return 0;
+}
+
 static void analyze_compound_literal_lineage(CompoundLiteralList *l,
                                              CursorRecursion *rec)
 {
@@ -766,13 +789,16 @@ static void analyze_compound_literal_lineage(CompoundLiteralList *l,
     dprintf("\n");
 #define DEBUG 0
 
-    if (rec->kind == CXCursor_VarDecl) {
+    p = rec->parent->parent;
+    if (is_const(l, rec)) {
+        //..
+    } else if (p->kind == CXCursor_VarDecl) {
         l->type = TYPE_OMIT_CAST;
         l->context_start = l->cast_token.start;
-    } else if (rec->kind == CXCursor_BinaryOperator ||
-               rec->kind == CXCursor_ReturnStmt) {
+    } else if (p->kind == CXCursor_BinaryOperator ||
+               p->kind == CXCursor_ReturnStmt) {
         l->type = TYPE_TEMP_ASSIGN;
-        l->context_start = get_token_offset(rec->tokens[0]);
+        l->context_start = get_token_offset(p->tokens[0]);
     }
 }
 
@@ -802,7 +828,7 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
     rec.parent = (CursorRecursion *) client_data;
     rec.parent->child_cntr++;
     rec.tokens = tokens;
-    rec.n_tokens = n_tokens;
+    rec.n_tokens = n_tokens - 1;
 
 #define DEBUG 0
     dprintf("DERP: %d [%d] %s @ %d:%d in %s\n", cursor.kind, parent.kind,
@@ -864,7 +890,7 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
         rec.data.cl_list = l;
         l->cast_token.start = get_token_offset(tokens[0]);
         clang_visitChildren(cursor, callback, &rec);
-        analyze_compound_literal_lineage(l, rec.parent->parent);
+        analyze_compound_literal_lineage(l, &rec);
         break;
     }
     case CXCursor_TypeRef:
@@ -886,6 +912,15 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
             //        ^^^^^^^
             l->value_token.start = get_token_offset(tokens[0]);
             l->value_token.end   = get_token_offset(tokens[n_tokens - 2]);
+            if (!l->cast_token.end) {
+                for (i = 0; i < rec.parent->n_tokens; i++) {
+                    unsigned off = get_token_offset(rec.parent->tokens[i]);
+                    if (off == l->value_token.start)
+                        break;
+                    else
+                        l->cast_token.end = off;
+                }
+            }
             clang_visitChildren(cursor, callback, &rec);
         } else {
             // another { val } or { .member = val } or { [index] = val }

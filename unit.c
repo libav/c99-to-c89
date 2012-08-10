@@ -48,13 +48,23 @@ static const int l[][8] = {
     lut(48)
 };
 
+typedef struct AVCodec {
+    int (*decode) (AVRational x);
+    const int *samplefmts;
+} AVCodec;
+
+static AVCodec decoder = {
+    .samplefmts = (const int[]) { 0, 1 },
+    .decode = call_function,
+};
+
 int main(int argc, char *argv[])
 {
     int var;
 
 #define X 3
     call_function((AVRational){2, 2});
-    var = ((int[2]){1,2})[argc];
+    var = ((const int[2]){1,2})[argc];
     var = call_function((AVRational){1, 2});
     if (var == 0) return call_function((AVRational){X, 2});
     else          return call_function((AVRational){2, X});
