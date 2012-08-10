@@ -761,7 +761,7 @@ static void analyze_compound_literal_lineage(CompoundLiteralList *l,
 {
     CursorRecursion *p = rec;
 
-#define DEBUG 1
+#define DEBUG 0
     dprintf("CL lineage: ");
     do {
         dprintf("%d, ", p->kind);
@@ -868,7 +868,6 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
         analyze_compound_literal_lineage(l, rec.parent->parent);
         break;
     }
-#define DEBUG 1
     case CXCursor_TypeRef:
         if (parent.kind == CXCursor_CompoundLiteralExpr) {
             CompoundLiteralList *l = rec.parent->data.cl_list;
@@ -889,7 +888,6 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
             l->value_token.start = get_token_offset(tokens[0]);
             l->value_token.end   = get_token_offset(tokens[n_tokens - 2]);
             clang_visitChildren(cursor, callback, &rec);
-#define DEBUG 0
         } else {
             // another { val } or { .member = val } or { [index] = val }
             StructArrayList *l;
