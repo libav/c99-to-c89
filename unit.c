@@ -11,10 +11,14 @@ typedef struct { int num, den; struct AVRational test; } AVRational3;
 static AVRational call_function_2(AVRational x)
 {
     AVRational y = (struct AVRational) { x.den, x.num };
-    x = (AVRational) { y.den, y.num };
-    return x.num > 0 ? (AVRational) { x.num, x.den } :
-           x.den > 0 ? (AVRational) { x.den, x.num } :
-                       (AVRational) { 0, 0 };
+    int z = -1; // unused
+    y = (AVRational) { y.den, y.num };
+    if (z == 0)
+        return (AVRational) { 5, -5 };
+    else
+        return x.num > 0 ? (AVRational) { x.num, x.den } :
+               x.den > 0 ? (AVRational) { x.den, x.num } :
+                           (AVRational) { 0, 0 };
 }
 
 static int call_function_3(AVRational x)
@@ -31,9 +35,8 @@ static int call_function(AVRational x)
 
     if ((res = call_function_3((AVRational) { 5, -5 }) > 0)) {
         return call_function_2(x).den;
-    } else {
-        return res;
-    }
+    } else
+        return call_function_3((AVRational) { -5, 5 });
 }
 
 #define lut_vals(x) x, x+1, x+2, x+3

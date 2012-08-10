@@ -697,6 +697,87 @@ static unsigned find_member_index_in_struct(StructDeclaration *str_decl,
     return -1;
 }
 
+static StructDeclaration *find_struct_decl_for_type_name(const char *name)
+{
+    if (!strncmp(name, "struct ", 7)) {
+        return find_struct_decl_by_name(name + 7);
+    } else {
+        TypedefDeclaration *decl = find_typedef_decl_by_name(name);
+        return decl ? decl->struct_decl : NULL;
+    }
+}
+
+/*
+ * Structure to keep track of compound literals that we eventually want
+ * to replace with something else.
+ */
+enum CLType {
+    TYPE_UNKNOWN = 0,
+    TYPE_OMIT_CAST,     // AVRational x = (AVRational) { y, z }
+                        // -> AVRational x = { y, z }
+    TYPE_TEMP_ASSIGN,   // AVRational x; [..] x = (AVRational) { y, z }
+                        // -> [..] { AVRational tmp = { y, z }; x = tmp; }
+                        // can also be used for return
+};
+
+typedef struct {
+    enum CLType type;
+    struct {
+        unsigned start, end; // to get the values
+    } value_token, cast_token;
+    union {
+        struct {
+            unsigned assign_start;
+        } t_a; // for TYPE_TEMP_ASSIGN
+    } data;
+    StructDeclaration *str_decl; // struct type
+} CompoundLiteralList;
+static CompoundLiteralList *comp_literal_lists = NULL;
+static unsigned n_comp_literal_lists = 0;
+static unsigned n_allocated_comp_literal_lists = 0;
+
+/*
+ * Helper struct for traversing the tree. This allows us to keep state
+ * beyond the current and parent node.
+ */
+typedef struct CursorRecursion CursorRecursion;
+struct CursorRecursion {
+    enum CXCursorKind kind;
+    CursorRecursion *parent;
+    CXToken *tokens;
+    unsigned n_tokens;
+    union {
+        void *opaque;
+        StructArrayList *l; // InitListExpr and UnexposedExpr
+        // after an InitListExpr
+        StructDeclaration *str_decl; // VarDecl
+        TypedefDeclaration *td_decl; // TypedefDecl
+        CompoundLiteralList *cl_list; // CompoundLiteralExpr
+    } data;
+};
+
+static void analyze_compound_literal_lineage(CompoundLiteralList *l,
+                                             CursorRecursion *rec)
+{
+    CursorRecursion *p = rec;
+
+#define DEBUG 1
+    dprintf("CL lineage: ");
+    do {
+        dprintf("%d, ", p->kind);
+    } while ((p = p->parent));
+    dprintf("\n");
+#define DEBUG 0
+
+    if (rec->kind == CXCursor_VarDecl) {
+        l->type = TYPE_OMIT_CAST;
+    } else if (rec->kind == CXCursor_BinaryOperator ||
+               rec->kind == CXCursor_ReturnStmt) {
+        l->type = TYPE_TEMP_ASSIGN;
+        l->data.t_a.assign_start = get_token_offset(rec->tokens[0]);
+    }
+}
+
 static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
                                         CXClientData client_data)
 {
@@ -709,6 +790,7 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
     CXFile file;
     unsigned line, col, off, i;
     CXString filename;
+    CursorRecursion rec;
 
     range = clang_getCursorExtent(cursor);
     pos   = clang_getCursorLocation(cursor);
@@ -716,6 +798,12 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
     clang_tokenize(TU, range, &tokens, &n_tokens);
     clang_getSpellingLocation(pos, &file, &line, &col, &off);
     filename = clang_getFileName(file);
+
+    rec.kind = cursor.kind;
+    rec.data.opaque = NULL;
+    rec.parent = (CursorRecursion *) client_data;
+    rec.tokens = tokens;
+    rec.n_tokens = n_tokens;
 
 #define DEBUG 0
     dprintf("DERP: %d [%d] %s @ %d:%d in %s\n", cursor.kind, parent.kind,
@@ -735,63 +823,72 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
     case CXCursor_TypedefDecl: {
         TypedefDeclaration decl;
         memset(&decl, 0, sizeof(decl));
-        clang_visitChildren(cursor, callback, &decl);
+        rec.data.td_decl = &decl;
+        clang_visitChildren(cursor, callback, &rec);
         register_typedef(clang_getCString(str), tokens, n_tokens,
                          &decl, cursor);
         break;
     }
     case CXCursor_StructDecl:
         register_struct(clang_getCString(str), cursor,
-                        (TypedefDeclaration *) client_data);
+                        parent.kind == CXCursor_TypedefDecl ?
+                            rec.parent->data.td_decl : NULL);
         break;
     case CXCursor_EnumDecl:
         register_enum(clang_getCString(str), cursor,
-                      (TypedefDeclaration *) client_data);
+                      parent.kind == CXCursor_TypedefDecl ?
+                            rec.parent->data.td_decl : NULL);
         break;
-    case CXCursor_VarDecl: {
+    case CXCursor_VarDecl:
         // e.g. static const struct <type> name { val }
         //      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-        const char *name = clang_getCString(str);
-        StructDeclaration *str_decl = find_struct_decl(name, tokens, n_tokens);
+        rec.data.str_decl = find_struct_decl(clang_getCString(str),
+                                             tokens, n_tokens);
+        clang_visitChildren(cursor, callback, &rec);
+        break;
+    case CXCursor_CompoundLiteralExpr: {
+        CompoundLiteralList *l;
 
-        clang_visitChildren(cursor, callback, str_decl);
+        if (n_comp_literal_lists == n_allocated_comp_literal_lists) {
+            unsigned num = n_allocated_comp_literal_lists + 16;
+            void *mem = realloc(comp_literal_lists,
+                                sizeof(*comp_literal_lists) * num);
+            if (!mem) {
+                fprintf(stderr, "Failed to allocate memory for complitlist\n");
+                exit(1);
+            }
+            comp_literal_lists = (CompoundLiteralList *) mem;
+            n_allocated_comp_literal_lists = num;
+        }
+        l = &comp_literal_lists[n_comp_literal_lists++];
+        memset(l, 0, sizeof(*l));
+        rec.data.cl_list = l;
+        l->cast_token.start = get_token_offset(tokens[0]);
+        clang_visitChildren(cursor, callback, &rec);
+        analyze_compound_literal_lineage(l, rec.parent->parent);
         break;
     }
-    case CXCursor_CompoundLiteralExpr:
 #define DEBUG 1
-        dprintf("Compound literal: %s [parent=%d]\n",
-                clang_getCString(str), parent.kind);
-        clang_visitChildren(cursor, callback, 0);
-        break;
-    case CXCursor_ParenExpr:
-        dprintf("Parenthesis - parent=%d\n", parent.kind);
-        clang_visitChildren(cursor, callback, 0);
-        break;
-    case CXCursor_CallExpr:
-        dprintf("Call - parent=%d\n", parent.kind);
-        clang_visitChildren(cursor, callback, 0);
-        break;
     case CXCursor_TypeRef:
         if (parent.kind == CXCursor_CompoundLiteralExpr) {
+            CompoundLiteralList *l = rec.parent->data.cl_list;
+
             // (type) { val }
             //  ^^^^
-            dprintf("Type: %s\n", clang_getCString(str));
+            l->cast_token.end = get_token_offset(tokens[n_tokens - 1]);
+            l->str_decl = find_struct_decl_for_type_name(clang_getCString(str));
         }
-        clang_visitChildren(cursor, callback, 0);
+        clang_visitChildren(cursor, callback, &rec);
         break;
     case CXCursor_InitListExpr:
         if (parent.kind == CXCursor_CompoundLiteralExpr) {
+            CompoundLiteralList *l = rec.parent->data.cl_list;
+
             // (type) { val }
             //        ^^^^^^^
-            clang_visitChildren(cursor, callback, 0);
-            // FIXME implement this
-            dprintf("Value: '");
-            for (i = 0; i < n_tokens - 1; i++) {
-                CXString spelling = clang_getTokenSpelling(TU, tokens[i]);
-                dprintf("%s", clang_getCString(spelling));
-                clang_disposeString(spelling);
-            }
-            dprintf("'\n");
+            l->value_token.start = get_token_offset(tokens[0]);
+            l->value_token.end   = get_token_offset(tokens[n_tokens - 2]);
+            clang_visitChildren(cursor, callback, &rec);
 #define DEBUG 0
         } else {
             // another { val } or { .member = val } or { [index] = val }
@@ -815,7 +912,7 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
             l->value_offset.start = get_token_offset(tokens[0]);
             l->value_offset.end   = get_token_offset(tokens[n_tokens - 2]);
             if (parent.kind == CXCursor_VarDecl) {
-                l->str_decl = (StructDeclaration *) client_data;
+                l->str_decl = rec.parent->data.str_decl;
                 l->level = 0;
             } else {
                 StructArrayList *parent;
@@ -834,15 +931,15 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
                 //             ^^^^^^^^^^^^^^         <- cursor
             }
 
-            clang_visitChildren(cursor, callback, l);
+            rec.data.l = l;
+            clang_visitChildren(cursor, callback, &rec);
         }
         break;
     case CXCursor_UnexposedExpr:
-            printf("UNEXP: parent=%d\n", parent.kind);
         if (parent.kind == CXCursor_InitListExpr) {
             CXString spelling = clang_getTokenSpelling(TU, tokens[0]);
             const char *istr = clang_getCString(spelling);
-            StructArrayList *l = (StructArrayList *) client_data;
+            StructArrayList *l = rec.parent->data.l;
 
             if (!strcmp(istr, "[") || !strcmp(istr, ".")) {
                 StructArrayItem *sai;
@@ -874,14 +971,15 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
                 sai->expression_offset.end   = get_token_offset(tokens[n_tokens - 2]);
                 sai->value_offset.start = get_token_offset(tokens[3 + (istr[0] == '[')]);
                 sai->value_offset.end   = get_token_offset(tokens[n_tokens - 2]);
-                clang_visitChildren(cursor, callback, l);
+                rec.data.l = l;
+                clang_visitChildren(cursor, callback, &rec);
                 l->n_entries++;
             } else {
-                clang_visitChildren(cursor, callback, 0);
+                clang_visitChildren(cursor, callback, &rec);
             }
             clang_disposeString(spelling);
         } else {
-            clang_visitChildren(cursor, callback, 0);
+            clang_visitChildren(cursor, callback, &rec);
         }
         break;
     case CXCursor_MemberRef:
@@ -889,7 +987,7 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
             // designated initializer (struct)
             // .member = val
             //  ^^^^^^
-            StructArrayList *l = (StructArrayList *) client_data;
+            StructArrayList *l = rec.parent->data.l;
             StructArrayItem *sai = &l->entries[l->n_entries];
             const char *member = clang_getCString(str);
 
@@ -901,13 +999,13 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
     case CXCursor_IntegerLiteral:
     case CXCursor_DeclRefExpr:
     case CXCursor_BinaryOperator:
-        if (parent.kind == CXCursor_UnexposedExpr && client_data) {
+        if (parent.kind == CXCursor_UnexposedExpr && rec.parent->data.opaque) {
             CXString spelling = clang_getTokenSpelling(TU, tokens[n_tokens - 1]);
             if (!strcmp(clang_getCString(spelling), "]")) {
                 // [index] = { val }
                 //  ^^^^^
                 int cache[3] = { 0 };
-                StructArrayList *l = (StructArrayList *) client_data;
+                StructArrayList *l = (StructArrayList *) rec.parent->data.l;
                 StructArrayItem *sai = &l->entries[l->n_entries];
 
                 fill_enum_value(cursor, parent, cache);
@@ -920,7 +1018,7 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
         } else if (cursor.kind != CXCursor_BinaryOperator)
             break;
     default:
-        clang_visitChildren(cursor, callback, 0);
+        clang_visitChildren(cursor, callback, &rec);
         break;
     }
 
@@ -1121,7 +1219,19 @@ static void cleanup(void)
     unsigned n, m;
 
 #define DEBUG 0
-    dprintf("N array/struct variables\n");
+    dprintf("N compound literals: %d\n", n_comp_literal_lists);
+    for (n = 0; n < n_comp_literal_lists; n++) {
+        dprintf("[%d]: type=%d, struct=%p (%s), variable range=%u-%u\n",
+                n, comp_literal_lists[n].type,
+                comp_literal_lists[n].str_decl,
+                comp_literal_lists[n].str_decl ?
+                    comp_literal_lists[n].str_decl->name : "<none>",
+                comp_literal_lists[n].value_token.start,
+                comp_literal_lists[n].value_token.end);
+    }
+    free(comp_literal_lists);
+
+    dprintf("N array/struct variables: %d\n", n_struct_array_lists);
     for (n = 0; n < n_struct_array_lists; n++) {
         dprintf("[%d]: type=%d, struct=%p (%s), level=%d, n_entries=%d, range=%u-%u\n",
                 n, struct_array_lists[n].type,
@@ -1224,6 +1334,7 @@ int main(int argc, char *argv[])
     CXToken *tokens;
     CXSourceRange range;
     CXCursor cursor;
+    CursorRecursion rec;
 
     index  = clang_createIndex(1, 1);
     TU     = clang_createTranslationUnitFromSourceFile(index, argv[1], 0,
@@ -1232,7 +1343,12 @@ int main(int argc, char *argv[])
     range  = clang_getCursorExtent(cursor);
     clang_tokenize(TU, range, &tokens, &n_tokens);
 
-    clang_visitChildren(cursor, callback, 0);
+    rec.tokens = tokens;
+    rec.n_tokens = n_tokens;
+    rec.kind = CXCursor_TranslationUnit;
+    rec.parent = NULL;
+    rec.data.opaque = NULL;
+    clang_visitChildren(cursor, callback, &rec);
     print_tokens(tokens, n_tokens);
     clang_disposeTokens(TU, tokens, n_tokens);
 
