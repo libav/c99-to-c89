@@ -729,9 +729,8 @@ typedef struct {
     enum CLType type;
     struct {
         unsigned start, end; // to get the values
-    } value_token, cast_token;
+    } value_token, cast_token, context;
     unsigned cast_token_array_start;
-    unsigned context_start;
     StructDeclaration *str_decl; // struct type
     union {
         struct {
@@ -771,7 +770,7 @@ static int is_const(CompoundLiteralList *l, CursorRecursion *rec)
 {
     unsigned n;
 
-    for (n = 0; n < rec->n_tokens; n++) {
+    for (n = 0; n < rec->n_tokens - 1; n++) {
         unsigned off = get_token_offset(rec->tokens[n]);
 
         if (off > l->cast_token.start && off < l->cast_token.end) {
@@ -814,18 +813,19 @@ static void analyze_compound_literal_lineage(CompoundLiteralList *l,
     if (is_const(l, rec)) {
         p = find_function_or_top(rec);
         if (p->parent->kind == CXCursor_FunctionDecl) {
-            l->context_start = get_token_offset(p->tokens[1]);
+            l->context.start = get_token_offset(p->tokens[1]);
         } else {
-            l->context_start = get_token_offset(p->tokens[0]);
+            l->context.start = get_token_offset(p->tokens[0]);
         }
         l->type = TYPE_CONST_DECL;
     } else if (p->kind == CXCursor_VarDecl) {
         l->type = TYPE_OMIT_CAST;
-        l->context_start = l->cast_token.start;
+        l->context.start = l->cast_token.start;
     } else if (p->kind == CXCursor_BinaryOperator ||
                p->kind == CXCursor_ReturnStmt) {
         l->type = TYPE_TEMP_ASSIGN;
-        l->context_start = get_token_offset(p->tokens[0]);
+        l->context.start = get_token_offset(p->tokens[0]);
+        l->context.end = get_token_offset(p->tokens[p->n_tokens - 1]);
     }
 }
 
@@ -855,7 +855,7 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
     rec.parent = (CursorRecursion *) client_data;
     rec.parent->child_cntr++;
     rec.tokens = tokens;
-    rec.n_tokens = n_tokens - 1;
+    rec.n_tokens = n_tokens;
 
 #define DEBUG 0
     dprintf("DERP: %d [%d] %s @ %d:%d in %s\n", cursor.kind, parent.kind,
@@ -951,7 +951,7 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
             l->value_token.start = get_token_offset(tokens[0]);
             l->value_token.end   = get_token_offset(tokens[n_tokens - 2]);
             if (!l->cast_token.end) {
-                for (i = 0; i < rec.parent->n_tokens; i++) {
+                for (i = 0; i < rec.parent->n_tokens - 1; i++) {
                     CXString spelling = clang_getTokenSpelling(TU,
                                                         rec.parent->tokens[i]);
                     unsigned off = get_token_offset(rec.parent->tokens[i]);
@@ -1202,8 +1202,8 @@ static void reorder_compound_literal_list(unsigned n)
 
         // find the lowest
         for (l = n + 1; l < n_comp_literal_lists; l++) {
-            if (comp_literal_lists[l].context_start <
-                comp_literal_lists[lowest].context_start) {
+            if (comp_literal_lists[l].context.start <
+                comp_literal_lists[lowest].context.start) {
                 lowest = l;
             }
         }
@@ -1272,13 +1272,14 @@ static void replace_comp_literal(CompoundLiteralList *l, unsigned *lnum,
     } else if (l->type == TYPE_TEMP_ASSIGN) {
         unsigned n, idx1, idx2, off;
 
+        // open a new context, so we can declare a new variable
         print_literal_text("{ ", lnum, cpos);
         declare_variable(l, *_n, tokens, n_tokens, "tmp__", lnum, cpos);
         print_literal_text("; ", lnum, cpos);
 
         // the actual statement follows
         idx1 = find_token_for_offset(tokens, n_tokens, *_n,
-                                     l->context_start);
+                                     l->context.start);
         idx2 = find_token_for_offset(tokens, n_tokens, *_n,
                                      l->cast_token.start);
         get_token_position(tokens[idx1], lnum, cpos, &off);
@@ -1286,11 +1287,23 @@ static void replace_comp_literal(CompoundLiteralList *l, unsigned *lnum,
             indent_for_token(tokens[n], lnum, cpos, &off);
             print_token(tokens[n], lnum, cpos);
         }
-        // FIXME here, we skip the ';' token; instead, we should print that
-        // token and possibly closing brackets around it (e.g. the remainder
-        // of a function call), so we support constructs that look like
-        // function((AVRational) { b, c }) or variants of that also.
-        print_literal_text(" tmp__; }", lnum, cpos);
+
+        // replace the CL with a reference to the newly created variable
+        print_literal_text(" tmp__", lnum, cpos);
+
+        // close the statement
+        idx1 = find_token_for_offset(tokens, n_tokens, *_n,
+                                     l->value_token.end) + 1;
+        idx2 = find_token_for_offset(tokens, n_tokens, *_n,
+                                     l->context.end);
+        get_token_position(tokens[idx1], lnum, cpos, &off);
+        for (n = idx1; n <= idx2; n++) {
+            indent_for_token(tokens[n], lnum, cpos, &off);
+            print_token(tokens[n], lnum, cpos);
+        }
+
+        // close the newly created context
+        print_literal_text(" }", lnum, cpos);
 
         // FIXME what if there are two CLs in a single (set of) function calls?
         // E.g. function((AVRational) { a, b }, (AVRational) { c, d }) or
@@ -1300,7 +1313,7 @@ static void replace_comp_literal(CompoundLiteralList *l, unsigned *lnum,
                                     l->value_token.end) + 1;
         get_token_position(tokens[*_n], lnum, cpos, &off);
     } else if (l->type == TYPE_CONST_DECL) {
-        if (l->context_start != l->cast_token.start) {
+        if (l->context.start != l->cast_token.start) {
             unsigned idx1, idx2, n, off;
             char tmp[256];
             static unsigned unique_cntr = 0;
@@ -1314,7 +1327,7 @@ static void replace_comp_literal(CompoundLiteralList *l, unsigned *lnum,
 
             // re-insert in list now for replacement of the variable
             // reference (instead of the actual CL)
-            l->context_start = l->cast_token.start;
+            l->context.start = l->cast_token.start;
             reorder_compound_literal_list(l - comp_literal_lists);
             (*_n)--;
             get_token_position(tokens[*_n], lnum, cpos, &off);
@@ -1391,7 +1404,7 @@ static void replace_struct_array(unsigned *_saidx, unsigned *lnum,
                 replace_struct_array(&saidx2, lnum, cpos, &n,
                                      tokens, n_tokens);
             } else if (clidx < n_comp_literal_lists &&
-                       off == comp_literal_lists[clidx].context_start) {
+                       off == comp_literal_lists[clidx].context.start) {
                 if (comp_literal_lists[clidx].type == TYPE_UNKNOWN) {
                     print_token(tokens[n], lnum, cpos);
                 } else {
@@ -1399,7 +1412,7 @@ static void replace_struct_array(unsigned *_saidx, unsigned *lnum,
                                          lnum, cpos, &n,
                                          tokens, n_tokens);
                 }
-                if (off == comp_literal_lists[clidx].context_start)
+                if (off == comp_literal_lists[clidx].context.start)
                     clidx++;
                 while (comp_literal_lists[clidx].type == TYPE_UNKNOWN)
                     clidx++;
@@ -1458,7 +1471,7 @@ static void print_tokens(CXToken *tokens, unsigned n_tokens)
                                      tokens, n_tokens);
             }
         } else if (clidx < n_comp_literal_lists &&
-                   off == comp_literal_lists[clidx].context_start) {
+                   off == comp_literal_lists[clidx].context.start) {
             if (comp_literal_lists[clidx].type == TYPE_UNKNOWN) {
                 print_token(tokens[n], &lnum, &cpos);
             } else {
@@ -1466,7 +1479,7 @@ static void print_tokens(CXToken *tokens, unsigned n_tokens)
                                      &lnum, &cpos, &n,
                                      tokens, n_tokens);
             }
-            if (off == comp_literal_lists[clidx].context_start)
+            if (off == comp_literal_lists[clidx].context.start)
                 clidx++;
             while (clidx < n_comp_literal_lists &&
                    comp_literal_lists[clidx].type == TYPE_UNKNOWN)
