@@ -188,6 +188,7 @@ static char *concat_name(CXToken *tokens, unsigned int from, unsigned to)
         CXString tstr = clang_getTokenSpelling(TU, tokens[n]);
         const char *cstr = clang_getCString(tstr);
         cnt += strlen(cstr) + 1;
+        clang_disposeString(tstr);
     }
 
     str = (char *) malloc(cnt);
@@ -207,6 +208,7 @@ static char *concat_name(CXToken *tokens, unsigned int from, unsigned to)
             str[cnt + len] = ' ';
         }
         cnt += len + 1;
+        clang_disposeString(tstr);
     }
 
     return str;
