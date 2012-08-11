@@ -730,6 +730,14 @@ typedef struct {
     } value_token, cast_token;
     unsigned context_start;
     StructDeclaration *str_decl; // struct type
+    union {
+        struct {
+            char *tmp_var_name; // temporary variable name for the constant
+                                // data, assigned in the first stage (var
+                                // declaration), and used in the second stage
+                                // (replacement of the CL with the var ref)
+        } t_c_d;
+    } data;
 } CompoundLiteralList;
 static CompoundLiteralList *comp_literal_lists = NULL;
 static unsigned n_comp_literal_lists = 0;
@@ -1170,6 +1178,7 @@ static void reorder_compound_literal_list(unsigned n)
     for (; n < n_comp_literal_lists - 1; n++) {
         unsigned l, lowest = n;
 
+        // find the lowest
         for (l = n + 1; l < n_comp_literal_lists; l++) {
             if (comp_literal_lists[l].context_start <
                 comp_literal_lists[lowest].context_start) {
@@ -1177,6 +1186,7 @@ static void reorder_compound_literal_list(unsigned n)
             }
         }
 
+        // move it in place
         if (lowest != n) {
             CompoundLiteralList bak = comp_literal_lists[lowest];
             memmove(&comp_literal_lists[n + 1], &comp_literal_lists[n],
@@ -1236,6 +1246,8 @@ static void replace_comp_literal(CompoundLiteralList *l, unsigned *lnum,
     } else if (l->type == TYPE_CONST_DECL) {
         if (l->context_start != l->cast_token.start) {
             unsigned idx1, idx2, n, off;
+            char tmp[256];
+            static unsigned unique_cntr = 0;
 
             // declare static const variable
             print_literal_text("static ", lnum, cpos);
@@ -1249,8 +1261,12 @@ static void replace_comp_literal(CompoundLiteralList *l, unsigned *lnum,
                 indent_for_token(tokens[n], lnum, cpos, &off);
                 print_token(tokens[n], lnum, cpos);
             }
-            // FIXME need unique name (see below)
-            print_literal_text(" tmp__ = ", lnum, cpos);
+            // need unique name (see below)
+            snprintf(tmp, sizeof(tmp), "tmp__%u", unique_cntr++);
+            print_literal_text(" ", lnum, cpos);
+            print_literal_text(tmp, lnum, cpos);
+            print_literal_text(" = ", lnum, cpos);
+            l->data.t_c_d.tmp_var_name = strdup(tmp);
 
             idx1 = find_token_for_offset(tokens, n_tokens, *_n,
                                          l->value_token.start);
@@ -1272,11 +1288,13 @@ static void replace_comp_literal(CompoundLiteralList *l, unsigned *lnum,
             get_token_position(tokens[*_n], lnum, cpos, &off);
         } else {
             unsigned off;
+            char *tmp_var_name = l->data.t_c_d.tmp_var_name;
 
             // replace original CL with a reference to the
             // newly declared static const variable
-            // FIXME need unique name (see above)
-            print_literal_text("tmp__", lnum, cpos);
+            print_literal_text(tmp_var_name, lnum, cpos);
+            l->data.t_c_d.tmp_var_name = NULL;
+            free(tmp_var_name);
             *_n = find_token_for_offset(tokens, n_tokens, *_n,
                                         l->value_token.end);
             get_token_position(tokens[*_n + 1], lnum, cpos, &off);
