@@ -728,6 +728,7 @@ typedef struct {
     struct {
         unsigned start, end; // to get the values
     } value_token, cast_token;
+    unsigned cast_token_array_start;
     unsigned context_start;
     StructDeclaration *str_decl; // struct type
     union {
@@ -920,11 +921,22 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
     case CXCursor_TypeRef:
         if (parent.kind == CXCursor_CompoundLiteralExpr) {
             CompoundLiteralList *l = rec.parent->data.cl_list;
+            unsigned n;
 
             // (type) { val }
             //  ^^^^
             l->cast_token.end = get_token_offset(tokens[n_tokens - 1]);
             l->str_decl = find_struct_decl_for_type_name(clang_getCString(str));
+            l->cast_token_array_start = l->cast_token.end;
+            for (n = 1; n < n_tokens - 1; n++) {
+                CXString spelling = clang_getTokenSpelling(TU, tokens[n]);
+                int res = strcmp(clang_getCString(spelling), "[");
+                clang_disposeString(spelling);
+                if (!res) {
+                    l->cast_token_array_start = get_token_offset(tokens[n]);
+                    break;
+                }
+            }
         }
         clang_visitChildren(cursor, callback, &rec);
         break;
@@ -938,12 +950,20 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
             l->value_token.end   = get_token_offset(tokens[n_tokens - 2]);
             if (!l->cast_token.end) {
                 for (i = 0; i < rec.parent->n_tokens; i++) {
+                    CXString spelling = clang_getTokenSpelling(TU,
+                                                        rec.parent->tokens[i]);
                     unsigned off = get_token_offset(rec.parent->tokens[i]);
+                    int res = strcmp(clang_getCString(spelling), "[");
+                    clang_disposeString(spelling);
+                    if (!res)
+                        l->cast_token_array_start = off;
                     if (off == l->value_token.start)
                         break;
                     else
                         l->cast_token.end = off;
                 }
+                if (!l->cast_token_array_start)
+                    l->cast_token_array_start = l->cast_token.end;
             }
             clang_visitChildren(cursor, callback, &rec);
         } else {
@@ -1192,7 +1212,6 @@ static void reorder_compound_literal_list(unsigned n)
             memmove(&comp_literal_lists[n + 1], &comp_literal_lists[n],
                     sizeof(comp_literal_lists[0]) * (lowest - n));
             comp_literal_lists[n] = bak;
-            printf("reorder %d->%d\n", lowest, n);
         }
     }
 }
@@ -1254,7 +1273,7 @@ static void replace_comp_literal(CompoundLiteralList *l, unsigned *lnum,
             idx1 = find_token_for_offset(tokens, n_tokens, *_n,
                                          l->cast_token.start) + 1;
             idx2 = find_token_for_offset(tokens, n_tokens, *_n,
-                                         l->cast_token.end) - 1;
+                                         l->cast_token_array_start) - 1;
             get_token_position(tokens[idx1], lnum, cpos, &off);
             for (n = idx1; n <= idx2; n++) {
                 // FIXME split array out
@@ -1265,8 +1284,20 @@ static void replace_comp_literal(CompoundLiteralList *l, unsigned *lnum,
             snprintf(tmp, sizeof(tmp), "tmp__%u", unique_cntr++);
             print_literal_text(" ", lnum, cpos);
             print_literal_text(tmp, lnum, cpos);
-            print_literal_text(" = ", lnum, cpos);
             l->data.t_c_d.tmp_var_name = strdup(tmp);
+
+            // array tokens, if any
+            idx1 = find_token_for_offset(tokens, n_tokens, *_n,
+                                         l->cast_token_array_start);
+            idx2 = find_token_for_offset(tokens, n_tokens, *_n,
+                                         l->cast_token.end) - 1;
+            get_token_position(tokens[idx1], lnum, cpos, &off);
+            for (n = idx1; n <= idx2; n++) {
+                indent_for_token(tokens[n], lnum, cpos, &off);
+                print_token(tokens[n], lnum, cpos);
+            }
+
+            print_literal_text(" = ", lnum, cpos);
 
             idx1 = find_token_for_offset(tokens, n_tokens, *_n,
                                          l->value_token.start);
