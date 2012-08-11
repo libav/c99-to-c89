@@ -1218,6 +1218,47 @@ static void reorder_compound_literal_list(unsigned n)
     }
 }
 
+static void declare_variable(CompoundLiteralList *l, unsigned cur_tok_off,
+                             CXToken *tokens, unsigned n_tokens,
+                             const char *var_name, unsigned *lnum,
+                             unsigned *cpos)
+{
+    unsigned idx1, idx2, off, n;
+
+    /* type information, e.g. 'int' or 'struct AVRational' */
+    idx1 = find_token_for_offset(tokens, n_tokens, cur_tok_off,
+                                 l->cast_token.start);
+    idx2 = find_token_for_offset(tokens, n_tokens, cur_tok_off,
+                                 l->cast_token_array_start);
+    get_token_position(tokens[idx1 + 1], lnum, cpos, &off);
+    for (n = idx1 + 1; n <= idx2 - 1; n++) {
+        indent_for_token(tokens[n], lnum, cpos, &off);
+        print_token(tokens[n], lnum, cpos);
+    }
+
+    /* variable name and array tokens, e.g. 'tmp[]' */
+    print_literal_text(" ", lnum, cpos);
+    print_literal_text(var_name, lnum, cpos);
+    idx1 = find_token_for_offset(tokens, n_tokens, cur_tok_off,
+                                 l->cast_token.end);
+    for (n = idx2; n <= idx1 - 1; n++) {
+        indent_for_token(tokens[n], lnum, cpos, &off);
+        print_token(tokens[n], lnum, cpos);
+    }
+    print_literal_text(" = ", lnum, cpos);
+
+    /* value */
+    idx1 = find_token_for_offset(tokens, n_tokens, cur_tok_off,
+                                 l->value_token.start);
+    idx2 = find_token_for_offset(tokens, n_tokens, cur_tok_off,
+                                 l->value_token.end);
+    get_token_position(tokens[idx1], lnum, cpos, &off);
+    for (n = idx1; n <= idx2; n++) {
+        indent_for_token(tokens[n], lnum, cpos, &off);
+        print_token(tokens[n], lnum, cpos);
+    }
+}
+
 static void replace_comp_literal(CompoundLiteralList *l, unsigned *lnum,
                                  unsigned *cpos, unsigned *_n,
                                  CXToken *tokens, unsigned n_tokens)
@@ -1232,34 +1273,28 @@ static void replace_comp_literal(CompoundLiteralList *l, unsigned *lnum,
         unsigned n, idx1, idx2, off;
 
         print_literal_text("{ ", lnum, cpos);
-        idx1 = find_token_for_offset(tokens, n_tokens, *_n,
-                                     l->cast_token.start);
-        idx2 = find_token_for_offset(tokens, n_tokens, *_n,
-                                     l->cast_token.end);
-        for (n = idx1 + 1; n < idx2; n++) {
-            print_token(tokens[n], lnum, cpos);
-            print_literal_text(" ", lnum, cpos);
-        }
-        print_literal_text("tmp__ = ", lnum, cpos);
-        idx1 = find_token_for_offset(tokens, n_tokens, *_n,
-                                     l->value_token.start);
-        idx2 = find_token_for_offset(tokens, n_tokens, *_n,
-                                     l->value_token.end);
-        get_token_position(tokens[idx1], lnum, cpos, &off);
-        for (n = idx1; n <= idx2; n++) {
-            indent_for_token(tokens[n], lnum, cpos, &off);
-            print_token(tokens[n], lnum, cpos);
-        }
+        declare_variable(l, *_n, tokens, n_tokens, "tmp__", lnum, cpos);
         print_literal_text("; ", lnum, cpos);
+
+        // the actual statement follows
         idx1 = find_token_for_offset(tokens, n_tokens, *_n,
                                      l->context_start);
         idx2 = find_token_for_offset(tokens, n_tokens, *_n,
                                      l->cast_token.start);
+        get_token_position(tokens[idx1], lnum, cpos, &off);
         for (n = idx1; n < idx2; n++) {
+            indent_for_token(tokens[n], lnum, cpos, &off);
             print_token(tokens[n], lnum, cpos);
-            print_literal_text(" ", lnum, cpos);
         }
-        print_literal_text("tmp__; }", lnum, cpos);
+        // FIXME here, we skip the ';' token; instead, we should print that
+        // token and possibly closing brackets around it (e.g. the remainder
+        // of a function call), so we support constructs that look like
+        // function((AVRational) { b, c }) or variants of that also.
+        print_literal_text(" tmp__; }", lnum, cpos);
+
+        // FIXME what if there are two CLs in a single (set of) function calls?
+        // E.g. function((AVRational) { a, b }, (AVRational) { c, d }) or
+        // function(function2((AVRational) { a, b }), (AVRational) { c, d }).
 
         *_n = find_token_for_offset(tokens, n_tokens, *_n,
                                     l->value_token.end) + 1;
@@ -1272,45 +1307,9 @@ static void replace_comp_literal(CompoundLiteralList *l, unsigned *lnum,
 
             // declare static const variable
             print_literal_text("static ", lnum, cpos);
-            idx1 = find_token_for_offset(tokens, n_tokens, *_n,
-                                         l->cast_token.start) + 1;
-            idx2 = find_token_for_offset(tokens, n_tokens, *_n,
-                                         l->cast_token_array_start) - 1;
-            get_token_position(tokens[idx1], lnum, cpos, &off);
-            for (n = idx1; n <= idx2; n++) {
-                // FIXME split array out
-                indent_for_token(tokens[n], lnum, cpos, &off);
-                print_token(tokens[n], lnum, cpos);
-            }
-            // need unique name (see below)
             snprintf(tmp, sizeof(tmp), "tmp__%u", unique_cntr++);
-            print_literal_text(" ", lnum, cpos);
-            print_literal_text(tmp, lnum, cpos);
             l->data.t_c_d.tmp_var_name = strdup(tmp);
-
-            // array tokens, if any
-            idx1 = find_token_for_offset(tokens, n_tokens, *_n,
-                                         l->cast_token_array_start);
-            idx2 = find_token_for_offset(tokens, n_tokens, *_n,
-                                         l->cast_token.end) - 1;
-            get_token_position(tokens[idx1], lnum, cpos, &off);
-            for (n = idx1; n <= idx2; n++) {
-                indent_for_token(tokens[n], lnum, cpos, &off);
-                print_token(tokens[n], lnum, cpos);
-            }
-
-            print_literal_text(" = ", lnum, cpos);
-
-            idx1 = find_token_for_offset(tokens, n_tokens, *_n,
-                                         l->value_token.start);
-            idx2 = find_token_for_offset(tokens, n_tokens, *_n,
-                                         l->value_token.end);
-            get_token_position(tokens[idx1], lnum, cpos, &off);
-            for (n = idx1; n <= idx2; n++) {
-                // FIXME split array out
-                indent_for_token(tokens[n], lnum, cpos, &off);
-                print_token(tokens[n], lnum, cpos);
-            }
+            declare_variable(l, *_n, tokens, n_tokens, tmp, lnum, cpos);
             print_literal_text(";", lnum, cpos);
 
             // re-insert in list now for replacement of the variable
