@@ -1603,6 +1603,11 @@ int main(int argc, char *argv[])
     CXCursor cursor;
     CursorRecursion rec;
 
+    if (argc != 2) {
+        fprintf(stderr, "Usage: %s <file>\n", argv[0]);
+        exit(1);
+    }
+
     index  = clang_createIndex(1, 1);
     TU     = clang_createTranslationUnitFromSourceFile(index, argv[1], 0,
                                                        NULL, 0, NULL);
