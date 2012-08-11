@@ -1313,6 +1313,7 @@ static void replace_struct_array(unsigned *_saidx, unsigned *lnum,
             }
             continue; // gap
         }
+        // FIXME mixing variable declarations and code is a bad idea
         unsigned val_off_s = struct_array_lists[saidx].entries[val_idx].value_offset.start;
         unsigned val_off_e = struct_array_lists[saidx].entries[val_idx].value_offset.end;
         unsigned indent_token_end = find_token_for_offset(tokens, n_tokens, *_n, expr_off_s);
@@ -1368,7 +1369,10 @@ static void replace_struct_array(unsigned *_saidx, unsigned *lnum,
         n++;
         i++;
 
-        // FIXME this deletes terminating commas
+        // FIXME this deletes terminating commas - we should print
+        // tokens that are in between the values, but not the final
+        // spacing between the last "intermezzo" token and the start
+        // of the next value
     }
 
     // update *saidx
