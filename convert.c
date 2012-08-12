@@ -806,8 +806,6 @@ static CursorRecursion *find_var_decl_context(CursorRecursion *rec)
      * level's token range, we'll add a "}" or a "} while (0);". */
     for (p = rec; p != NULL; p = p->parent) {
         switch (p->kind) {
-        case CXCursor_ConditionalOperator:
-            return NULL;
         case CXCursor_VarDecl:
         case CXCursor_ReturnStmt:
         case CXCursor_CompoundStmt:
@@ -858,8 +856,33 @@ static void analyze_compound_literal_lineage(CompoundLiteralList *l,
     } else if ((p = find_var_decl_context(p))) {
         l->type = TYPE_TEMP_ASSIGN;
         l->context.start = get_token_offset(p->tokens[0]);
+        if (p->kind == CXCursor_VarDecl) {
+            /* if the parent is a VarDecl, the context.end should be the end
+             * of the whole context in which that variable exists, not just
+             * the end of the context of this particular statement. */
+            p = p->parent;
+            assert(p->kind == CXCursor_DeclStmt);
+            p = p->parent;
+        }
         l->context.end = get_token_offset(p->tokens[p->n_tokens - 1]);
     }
+}
+
+static unsigned get_n_tokens(CXToken *tokens, unsigned n_tokens)
+{
+    /* clang will set n_tokens to the number including the start of the
+     * next statement, regardless of whether that is part of the next
+     * statement or not. We actually care, since in some cases (if it's
+     * a ";"), we want to close contexts after it, whereas in other
+     * cases (if it's the start of the next statement, e.g. "static void
+     * function1(..) { .. } static void function2(..) { }", we want to
+     * close context before the last token (which in the first case is
+     * ";", but in the second case is "static"). */
+    CXString spelling = clang_getTokenSpelling(TU, tokens[n_tokens - 1]);
+    int res = strcmp(clang_getCString(spelling), ";");
+    clang_disposeString(spelling);
+
+    return n_tokens - !!res;
 }
 
 static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
@@ -888,7 +911,7 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
     rec.parent = (CursorRecursion *) client_data;
     rec.parent->child_cntr++;
     rec.tokens = tokens;
-    rec.n_tokens = n_tokens;
+    rec.n_tokens = get_n_tokens(tokens, n_tokens);
 
 #define DEBUG 0
     dprintf("DERP: %d [%d] %s @ %d:%d in %s\n", cursor.kind, parent.kind,
