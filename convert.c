@@ -1271,10 +1271,11 @@ static void replace_comp_literal(CompoundLiteralList *l, unsigned *lnum,
         get_token_position(tokens[*_n + 1], lnum, cpos, &off);
     } else if (l->type == TYPE_TEMP_ASSIGN) {
         unsigned n, idx1, idx2, off;
+        static const char var_name[] = "tmp__";
 
         // open a new context, so we can declare a new variable
         print_literal_text("{ ", lnum, cpos);
-        declare_variable(l, *_n, tokens, n_tokens, "tmp__", lnum, cpos);
+        declare_variable(l, *_n, tokens, n_tokens, var_name, lnum, cpos);
         print_literal_text("; ", lnum, cpos);
 
         // the actual statement follows
@@ -1284,12 +1285,12 @@ static void replace_comp_literal(CompoundLiteralList *l, unsigned *lnum,
                                      l->cast_token.start);
         get_token_position(tokens[idx1], lnum, cpos, &off);
         for (n = idx1; n < idx2; n++) {
-            indent_for_token(tokens[n], lnum, cpos, &off);
             print_token(tokens[n], lnum, cpos);
+            indent_for_token(tokens[n+1], lnum, cpos, &off);
         }
 
         // replace the CL with a reference to the newly created variable
-        print_literal_text(" tmp__", lnum, cpos);
+        print_literal_text(var_name, lnum, cpos);
 
         // close the statement
         idx1 = find_token_for_offset(tokens, n_tokens, *_n,
