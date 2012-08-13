@@ -8,6 +8,12 @@ typedef struct AVRational2 AVRational2;
 typedef struct AVRational4 AVRational4;
 typedef struct { int num, den; struct AVRational test; } AVRational3;
 
+static AVRational  gap_test() {
+    AVRational gap = { .den = 4 };
+    gap.num = 1;
+    return gap;
+}
+
 static AVRational call_function_2(AVRational x)
 {
     AVRational y = (struct AVRational) { x.den, x.num };
