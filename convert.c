@@ -1440,17 +1440,18 @@ static void replace_struct_array(unsigned *_saidx, unsigned *_clidx,
         unsigned expr_off_s = struct_array_lists[saidx].entries[i].expression_offset.start;
         unsigned expr_off_e = struct_array_lists[saidx].entries[i].expression_offset.end;
         unsigned val_idx = find_value_index(&struct_array_lists[saidx], j);
-        // FIXME this doesn't work if i == 0
-        // the proper solution for that is to indent before, then print the
-        // value + inter-value tokens or this placeholder + comma
+
         if (val_idx == -1) {
-            print_literal_text(",", lnum, cpos);
+            if (i)
+                print_literal_text(",", lnum, cpos);
             if (saidx < n_struct_array_lists - 1 &&
                 struct_array_lists[saidx + 1].level > struct_array_lists[saidx].level) {
                 print_literal_text("{}", lnum, cpos);
             } else {
                 print_literal_text("0", lnum, cpos);
             }
+            if (!i)
+                print_literal_text(", ", lnum, cpos);
             continue; // gap
         }
         // FIXME mixing variable declarations and code is a bad idea
