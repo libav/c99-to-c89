@@ -362,17 +362,38 @@ static void register_struct(const char *str, CXCursor cursor,
 
 static int arithmetic_expression(int val1, const char *expr, int val2)
 {
-    assert(expr[1] == 0);
+    assert(expr[1] == 0 || expr[2] == 0);
 
-    switch (expr[0]) {
-    case '^': return val1 ^ val2;
-    case '|': return val1 | val2;
-    case '&': return val1 & val2;
-    case '+': return val1 + val2;
-    case '-': return val1 - val2;
-    case '*': return val1 * val2;
-    case '/': return val1 / val2;
-    case '%': return val1 % val2;
+    if (expr[1] == 0) {
+        switch (expr[0]) {
+        case '^': return val1 ^ val2;
+        case '|': return val1 | val2;
+        case '&': return val1 & val2;
+        case '+': return val1 + val2;
+        case '-': return val1 - val2;
+        case '*': return val1 * val2;
+        case '/': return val1 / val2;
+        case '%': return val1 % val2;
+        default:
+            fprintf(stderr, "Arithmetic expression '%c' not handled\n",
+                    expr[0]);
+            exit(1);
+        }
+    } else {
+#define TWOCHARCODE(a, b) ((a << 8) | b)
+#define TWOCHARTAG(expr) (TWOCHARCODE(expr[0], expr[1]))
+        switch (TWOCHARTAG(expr)) {
+        case TWOCHARCODE('<', '='): return val1 <= val2;
+        case TWOCHARCODE('>', '='): return val1 >= val2;
+        case TWOCHARCODE('!', '='): return val1 != val2;
+        case TWOCHARCODE('=', '='): return val1 == val2;
+        case TWOCHARCODE('<', '<'): return val1 << val2;
+        case TWOCHARCODE('>', '>'): return val1 >> val2;
+        default:
+            fprintf(stderr, "Arithmetic expression '%s' not handled\n",
+                    expr);
+            exit(1);
+        }
     }
 
     fprintf(stderr, "Unknown arithmetic expression %s\n", expr);
