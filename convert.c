@@ -1435,42 +1435,36 @@ static void replace_struct_array(unsigned *_saidx, unsigned *_clidx,
     // we assume here the indenting for the first opening token,
     // i.e. the '{', is already taken care of
     print_token(tokens[n++], lnum, cpos);
+    indent_for_token(tokens[n], lnum, cpos, &off);
 
     for (j = 0, i = 0; i < struct_array_lists[saidx].n_entries; j++) {
-        unsigned expr_off_s = struct_array_lists[saidx].entries[i].expression_offset.start;
-        unsigned expr_off_e = struct_array_lists[saidx].entries[i].expression_offset.end;
-        unsigned val_idx = find_value_index(&struct_array_lists[saidx], j);
+        unsigned expr_off_s, expr_off_e, val_idx, val_off_s, val_off_e, saidx2,
+                 indent_token_end, next_indent_token_start, val_token_start,
+                 val_token_end;
+        CXString spelling;
+
+        val_idx = find_value_index(&struct_array_lists[saidx], j);
 
         if (val_idx == -1) {
-            if (i)
-                print_literal_text(",", lnum, cpos);
             if (saidx < n_struct_array_lists - 1 &&
                 struct_array_lists[saidx + 1].level > struct_array_lists[saidx].level) {
                 print_literal_text("{}", lnum, cpos);
             } else {
                 print_literal_text("0", lnum, cpos);
             }
-            if (!i)
-                print_literal_text(", ", lnum, cpos);
+            print_literal_text(", ", lnum, cpos);
             continue; // gap
         }
-        // FIXME mixing variable declarations and code is a bad idea
-        unsigned val_off_s = struct_array_lists[saidx].entries[val_idx].value_offset.start;
-        unsigned val_off_e = struct_array_lists[saidx].entries[val_idx].value_offset.end;
-        unsigned indent_token_end = find_token_for_offset(tokens, n_tokens, *_n, expr_off_s);
-        unsigned next_indent_token_start = find_token_for_offset(tokens, n_tokens, *_n,
-                                                                 expr_off_e);
-        unsigned val_token_start = find_token_for_offset(tokens, n_tokens, *_n, val_off_s);
-        unsigned val_token_end = find_token_for_offset(tokens, n_tokens, *_n, val_off_e);
-        unsigned saidx2 = find_index_for_level(struct_array_lists[saidx].level + 1,
-                                               val_idx, saidx + 1);
 
-        // indent as if we were in order
-        for (; n <= indent_token_end; n++) {
-            indent_for_token(tokens[n], lnum, cpos, &off);
-            if (n != indent_token_end)
-                print_token(tokens[n], lnum, cpos);
-        }
+        expr_off_e = struct_array_lists[saidx].entries[i].expression_offset.end;
+        next_indent_token_start = find_token_for_offset(tokens, n_tokens, *_n,
+                                                        expr_off_e);
+        val_off_s = struct_array_lists[saidx].entries[val_idx].value_offset.start;
+        val_token_start = find_token_for_offset(tokens, n_tokens, *_n, val_off_s);
+        val_off_e = struct_array_lists[saidx].entries[val_idx].value_offset.end;
+        val_token_end = find_token_for_offset(tokens, n_tokens, *_n, val_off_e);
+        saidx2 = find_index_for_level(struct_array_lists[saidx].level + 1,
+                                      val_idx, saidx + 1);
 
         // adjust position
         get_token_position(tokens[val_token_start], lnum, cpos, &off);
@@ -1486,16 +1480,23 @@ static void replace_struct_array(unsigned *_saidx, unsigned *_clidx,
         // adjust token index and position back
         n = next_indent_token_start;
         get_token_position(tokens[n], lnum, cpos, &off);
-        CXString spelling = clang_getTokenSpelling(TU, tokens[n]);
+        spelling = clang_getTokenSpelling(TU, tokens[n]);
         (*cpos) += strlen(clang_getCString(spelling));
         clang_disposeString(spelling);
         n++;
-        i++;
 
-        // FIXME this deletes terminating commas - we should print
-        // tokens that are in between the values, but not the final
-        // spacing between the last "intermezzo" token and the start
-        // of the next value
+        if (++i < struct_array_lists[saidx].n_entries) {
+            expr_off_s = struct_array_lists[saidx].entries[i].expression_offset.start;
+            indent_token_end = find_token_for_offset(tokens, n_tokens, *_n, expr_off_s);
+        } else {
+            indent_token_end = find_token_for_offset(tokens, n_tokens, *_n,
+                                                     struct_array_lists[saidx].value_offset.end);
+        }
+
+        for (; n < indent_token_end; n++) {
+            print_token(tokens[n], lnum, cpos);
+            indent_for_token(tokens[n + 1], lnum, cpos, &off);
+        }
     }
 
     // update *saidx
