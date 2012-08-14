@@ -133,8 +133,8 @@ static unsigned n_allocated_enums = 0;
 typedef struct {
     char *proxy;
     char *name;
-    StructDeclaration *struct_decl;
-    EnumDeclaration *enum_decl;
+    unsigned struct_decl_idx;
+    unsigned enum_decl_idx;
     CXCursor cursor;
 } TypedefDeclaration;
 static TypedefDeclaration *typedefs = NULL;
@@ -155,7 +155,7 @@ typedef struct {
 
 typedef struct {
     enum StructArrayType type;
-    StructDeclaration *str_decl;
+    unsigned struct_decl_idx;
     StructArrayItem *entries;
     unsigned level;
     unsigned n_entries;
@@ -245,6 +245,12 @@ static enum CXChildVisitResult fill_struct_members(CXCursor cursor,
         unsigned int n_tokens = 0;
         CXSourceRange range = clang_getCursorExtent(cursor);
 
+        // padding bitfields
+        if (!strcmp(str, "")) {
+            clang_disposeString(cstr);
+            return CXChildVisit_Continue;
+        }
+
         clang_tokenize(TU, range, &tokens, &n_tokens);
 
         if (decl->n_entries == decl->n_allocated_entries) {
@@ -331,7 +337,7 @@ static void register_struct(const char *str, CXCursor cursor,
             memcmp(&cursor, &structs[n].cursor, sizeof(cursor))) {
             /* already exists */
             if (decl_ptr)
-                decl_ptr->struct_decl = &structs[n];
+                decl_ptr->struct_decl_idx = n;
             return;
         }
     }
@@ -347,6 +353,8 @@ static void register_struct(const char *str, CXCursor cursor,
         n_allocated_structs = num;
     }
 
+    if (decl_ptr)
+        decl_ptr->struct_decl_idx = n_structs;
     decl = &structs[n_structs++];
     decl->name = strdup(str);
     decl->cursor = cursor;
@@ -355,9 +363,6 @@ static void register_struct(const char *str, CXCursor cursor,
     decl->entries = NULL;
 
     clang_visitChildren(cursor, fill_struct_members, decl);
-
-    if (decl_ptr)
-        decl_ptr->struct_decl = decl;
 }
 
 static int arithmetic_expression(int val1, const char *expr, int val2)
@@ -524,7 +529,7 @@ static void register_enum(const char *str, CXCursor cursor,
             memcmp(&cursor, &enums[n].cursor, sizeof(cursor))) {
             /* already exists */
             if (decl_ptr)
-                decl_ptr->enum_decl = &enums[n];
+                decl_ptr->enum_decl_idx = n;
             return;
         }
     }
@@ -540,6 +545,8 @@ static void register_enum(const char *str, CXCursor cursor,
         n_allocated_enums = num;
     }
 
+    if (decl_ptr)
+        decl_ptr->enum_decl_idx = n_enums;
     decl = &enums[n_enums++];
     decl->name = strdup(str);
     decl->cursor = cursor;
@@ -548,9 +555,6 @@ static void register_enum(const char *str, CXCursor cursor,
     decl->entries = NULL;
 
     clang_visitChildren(cursor, fill_enum_members, decl);
-
-    if (decl_ptr)
-        decl_ptr->enum_decl = decl;
 }
 
 static void register_typedef(const char *name,
@@ -573,17 +577,17 @@ static void register_typedef(const char *name,
 
     n = n_typedefs++;
     typedefs[n].name = strdup(name);
-    if (decl->struct_decl) {
-        typedefs[n].struct_decl = decl->struct_decl;
+    if (decl->struct_decl_idx != (unsigned) -1) {
+        typedefs[n].struct_decl_idx = decl->struct_decl_idx;
         typedefs[n].proxy = NULL;
-        typedefs[n].enum_decl = NULL;
-    } else if (decl->enum_decl) {
-        typedefs[n].enum_decl = decl->enum_decl;
-        typedefs[n].struct_decl = NULL;
+        typedefs[n].enum_decl_idx = (unsigned) -1;
+    } else if (decl->enum_decl_idx != (unsigned) -1) {
+        typedefs[n].enum_decl_idx = decl->enum_decl_idx;
+        typedefs[n].struct_decl_idx = (unsigned) -1;
         typedefs[n].proxy = NULL;
     } else {
-        typedefs[n].enum_decl = NULL;
-        typedefs[n].struct_decl = NULL;
+        typedefs[n].enum_decl_idx = (unsigned) -1;
+        typedefs[n].struct_decl_idx = (unsigned) -1;
         typedefs[n].proxy = concat_name(tokens, 1, n_tokens - 3);
     }
     memcpy(&typedefs[n].cursor, &cursor, sizeof(cursor));
@@ -600,16 +604,16 @@ static unsigned get_token_offset(CXToken token)
     return off;
 }
 
-static StructDeclaration *find_struct_decl_by_name(const char *name)
+static unsigned find_struct_decl_idx_by_name(const char *name)
 {
     unsigned n;
 
     for (n = 0; n < n_structs; n++) {
         if (!strcmp(name, structs[n].name))
-            return &structs[n];
+            return n;
     }
 
-    return NULL;
+    return (unsigned) -1;
 }
 
 static TypedefDeclaration *find_typedef_decl_by_name(const char *name)
@@ -626,8 +630,8 @@ static TypedefDeclaration *find_typedef_decl_by_name(const char *name)
 
 // FIXME this function has some duplicate functionality compared to
 // fill_struct_members() further up.
-static StructDeclaration *find_struct_decl(const char *var, CXToken *tokens,
-                                           unsigned n_tokens)
+static unsigned find_struct_decl_idx(const char *var, CXToken *tokens,
+                                     unsigned n_tokens)
 {
     /*
      * In the list of tokens that make up a sequence like:
@@ -648,7 +652,7 @@ static StructDeclaration *find_struct_decl(const char *var, CXToken *tokens,
             break;
     }
     if (n == n_tokens)
-        return NULL;
+        return (unsigned) -1;
 
     // is it a struct?
     var_tok_idx = n;
@@ -661,10 +665,10 @@ static StructDeclaration *find_struct_decl(const char *var, CXToken *tokens,
         clang_disposeString(spelling);
 
         if (!res) {
-            StructDeclaration *str_decl;
+            unsigned str_decl;
 
             spelling = clang_getTokenSpelling(TU, tokens[var_tok_idx - 1]);
-            str_decl = find_struct_decl_by_name(clang_getCString(spelling));
+            str_decl = find_struct_decl_idx_by_name(clang_getCString(spelling));
             clang_disposeString(spelling);
 
             return str_decl;
@@ -684,16 +688,15 @@ static StructDeclaration *find_struct_decl(const char *var, CXToken *tokens,
         // a struct typedef declared in advance, whereas the struct itself
         // was declared separately. In that case, we should find the struct
         // declaration delayed, e.g. here/now.
-        if (td_decl && td_decl->struct_decl)
-            return td_decl->struct_decl;
+        if (td_decl && td_decl->struct_decl_idx)
+            return td_decl->struct_decl_idx;
     }
 
-    return NULL;
+    return (unsigned) -1;
 }
 
-static StructDeclaration *find_encompassing_struct_decl(unsigned start,
-                                                        unsigned end,
-                                                        StructArrayList **ptr)
+static unsigned find_encompassing_struct_decl(unsigned start, unsigned end,
+                                              StructArrayList **ptr)
 {
     /*
      * In previously registered arrays/structs, find one with a start-end
@@ -708,17 +711,17 @@ static StructDeclaration *find_encompassing_struct_decl(unsigned start,
             end   <= struct_array_lists[n].value_offset.end) {
             if (struct_array_lists[n].type == TYPE_ARRAY) {
                 *ptr = &struct_array_lists[n];
-                return struct_array_lists[n].str_decl;
+                return struct_array_lists[n].struct_decl_idx;
             } else if (struct_array_lists[n].type == TYPE_STRUCT) {
                 // FIXME return type of that member
-                return NULL;
+                return (unsigned) -1;
             } else {
-                return NULL;
+                return (unsigned) -1;
             }
         }
     }
 
-    return NULL;
+    return (unsigned) -1;
 }
 
 static unsigned find_member_index_in_struct(StructDeclaration *str_decl,
@@ -734,13 +737,13 @@ static unsigned find_member_index_in_struct(StructDeclaration *str_decl,
     return -1;
 }
 
-static StructDeclaration *find_struct_decl_for_type_name(const char *name)
+static unsigned find_struct_decl_idx_for_type_name(const char *name)
 {
     if (!strncmp(name, "struct ", 7)) {
-        return find_struct_decl_by_name(name + 7);
+        return find_struct_decl_idx_by_name(name + 7);
     } else {
         TypedefDeclaration *decl = find_typedef_decl_by_name(name);
-        return decl ? decl->struct_decl : NULL;
+        return decl ? decl->struct_decl_idx : (unsigned) -1;
     }
 }
 
@@ -766,7 +769,7 @@ typedef struct {
         unsigned start, end; // to get the values
     } value_token, cast_token, context;
     unsigned cast_token_array_start;
-    StructDeclaration *str_decl; // struct type
+    unsigned struct_decl_idx; // struct type
     union {
         struct {
             char *tmp_var_name; // temporary variable name for the constant
@@ -795,7 +798,7 @@ struct CursorRecursion {
         void *opaque;
         StructArrayList *l; // InitListExpr and UnexposedExpr
         // after an InitListExpr
-        StructDeclaration *str_decl; // VarDecl
+        unsigned struct_decl_idx; // VarDecl
         TypedefDeclaration *td_decl; // TypedefDecl
         CompoundLiteralList *cl_list; // CompoundLiteralExpr
     } data;
@@ -985,8 +988,8 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
     case CXCursor_VarDecl:
         // e.g. static const struct <type> name { val }
         //      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-        rec.data.str_decl = find_struct_decl(clang_getCString(str),
-                                             tokens, n_tokens);
+        rec.data.struct_decl_idx = find_struct_decl_idx(clang_getCString(str),
+                                                        tokens, n_tokens);
         clang_visitChildren(cursor, callback, &rec);
         break;
     case CXCursor_CompoundLiteralExpr: {
@@ -1007,6 +1010,7 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
         memset(l, 0, sizeof(*l));
         rec.data.cl_list = l;
         l->cast_token.start = get_token_offset(tokens[0]);
+        l->struct_decl_idx = (unsigned) -1;
         clang_visitChildren(cursor, callback, &rec);
         analyze_compound_literal_lineage(l, &rec);
         break;
@@ -1019,7 +1023,7 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
             // (type) { val }
             //  ^^^^
             l->cast_token.end = get_token_offset(tokens[n_tokens - 1]);
-            l->str_decl = find_struct_decl_for_type_name(clang_getCString(str));
+            l->struct_decl_idx = find_struct_decl_idx_for_type_name(clang_getCString(str));
             l->cast_token_array_start = l->cast_token.end;
             for (n = 1; n < n_tokens - 1; n++) {
                 CXString spelling = clang_getTokenSpelling(TU, tokens[n]);
@@ -1081,14 +1085,15 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
             l->value_offset.start = get_token_offset(tokens[0]);
             l->value_offset.end   = get_token_offset(tokens[n_tokens - 2]);
             if (parent.kind == CXCursor_VarDecl) {
-                l->str_decl = rec.parent->data.str_decl;
+                l->struct_decl_idx = rec.parent->data.struct_decl_idx;
                 l->level = 0;
             } else {
                 StructArrayList *parent;
-                l->str_decl = find_encompassing_struct_decl(l->value_offset.start,
-                                                            l->value_offset.end,
-                                                            &parent);
+                unsigned idx = find_encompassing_struct_decl(l->value_offset.start,
+                                                             l->value_offset.end,
+                                                             &parent);
                 l->level = parent ? parent->level + 1 : 0;
+                l->struct_decl_idx = idx;
 
                 // FIXME if needed, if the parent is an InitListExpr also,
                 // here we could increment the parent l->n_entries to keep
@@ -1162,7 +1167,8 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
 
             assert(sai);
             assert(l->type == TYPE_STRUCT);
-            sai->index = find_member_index_in_struct(l->str_decl, member);
+            sai->index = find_member_index_in_struct(&structs[l->struct_decl_idx],
+                                                     member);
         }
         break;
     case CXCursor_IntegerLiteral:
@@ -1589,11 +1595,11 @@ static void cleanup(void)
 #define DEBUG 0
     dprintf("N compound literals: %d\n", n_comp_literal_lists);
     for (n = 0; n < n_comp_literal_lists; n++) {
-        dprintf("[%d]: type=%d, struct=%p (%s), variable range=%u-%u\n",
+        dprintf("[%d]: type=%d, struct=%d (%s), variable range=%u-%u\n",
                 n, comp_literal_lists[n].type,
-                comp_literal_lists[n].str_decl,
-                comp_literal_lists[n].str_decl ?
-                    comp_literal_lists[n].str_decl->name : "<none>",
+                comp_literal_lists[n].struct_decl_idx,
+                comp_literal_lists[n].struct_decl_idx != (unsigned) -1 ?
+                    structs[comp_literal_lists[n].struct_decl_idx].name : "<none>",
                 comp_literal_lists[n].value_token.start,
                 comp_literal_lists[n].value_token.end);
     }
@@ -1601,11 +1607,11 @@ static void cleanup(void)
 
     dprintf("N array/struct variables: %d\n", n_struct_array_lists);
     for (n = 0; n < n_struct_array_lists; n++) {
-        dprintf("[%d]: type=%d, struct=%p (%s), level=%d, n_entries=%d, range=%u-%u\n",
+        dprintf("[%d]: type=%d, struct=%d (%s), level=%d, n_entries=%d, range=%u-%u\n",
                 n, struct_array_lists[n].type,
-                struct_array_lists[n].str_decl,
-                struct_array_lists[n].str_decl ?
-                    struct_array_lists[n].str_decl->name : "<none>",
+                struct_array_lists[n].struct_decl_idx,
+                struct_array_lists[n].struct_decl_idx != (unsigned) -1 ?
+                    structs[struct_array_lists[n].struct_decl_idx].name : "<none>",
                 struct_array_lists[n].level,
                 struct_array_lists[n].n_entries,
                 struct_array_lists[n].value_offset.start,
@@ -1622,27 +1628,27 @@ static void cleanup(void)
 
     dprintf("N typedef entries: %d\n", n_typedefs);
     for (n = 0; n < n_typedefs; n++) {
-        if (typedefs[n].struct_decl) {
-            if (typedefs[n].struct_decl->name[0]) {
-                dprintf("[%d]: %s (struct %s = %p)\n",
+        if (typedefs[n].struct_decl_idx != (unsigned) -1) {
+            if (structs[typedefs[n].struct_decl_idx].name[0]) {
+                dprintf("[%d]: %s (struct %s = %d)\n",
                         n, typedefs[n].name,
-                        typedefs[n].struct_decl->name,
-                        typedefs[n].struct_decl);
+                        structs[typedefs[n].struct_decl_idx].name,
+                        typedefs[n].struct_decl_idx);
             } else {
-                dprintf("[%d]: %s (<anonymous> struct = %p)\n",
+                dprintf("[%d]: %s (<anonymous> struct = %d)\n",
                         n, typedefs[n].name,
-                        typedefs[n].struct_decl);
+                        typedefs[n].struct_decl_idx);
             }
-        } else if (typedefs[n].enum_decl) {
-            if (typedefs[n].enum_decl->name[0]) {
-                dprintf("[%d]: %s (enum %s = %p)\n",
+        } else if (typedefs[n].enum_decl_idx != (unsigned) -1) {
+            if (structs[typedefs[n].enum_decl_idx].name[0]) {
+                dprintf("[%d]: %s (enum %s = %d)\n",
                         n, typedefs[n].name,
-                        typedefs[n].enum_decl->name,
-                        typedefs[n].enum_decl);
+                        enums[typedefs[n].enum_decl_idx].name,
+                        typedefs[n].enum_decl_idx);
             } else {
-                dprintf("[%d]: %s (<anonymous> enum = %p)\n",
+                dprintf("[%d]: %s (<anonymous> enum = %d)\n",
                         n, typedefs[n].name,
-                        typedefs[n].enum_decl);
+                        typedefs[n].enum_decl_idx);
             }
         } else {
             dprintf("[%d]: %s (%s)\n",

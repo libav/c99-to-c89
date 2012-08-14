@@ -20,6 +20,10 @@ test2: converter
 	$(CC) -E unit2.c -o unit2.c.c
 	./converter unit2.c.c
 
+test3: converter
+	$(CC) $(CFLAGS) -E -o convert.c.c convert.c
+	./converter convert.c.c
+
 converter: $(OBJS)
 	$(LD) -o $@ $< $(LDFLAGS) $(LIBS)
 
