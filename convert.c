@@ -334,7 +334,7 @@ static void register_struct(const char *str, CXCursor cursor,
 
     for (n = 0; n < n_structs; n++) {
         if (!strcmp(structs[n].name, str) &&
-            memcmp(&cursor, &structs[n].cursor, sizeof(cursor))) {
+            !memcmp(&cursor, &structs[n].cursor, sizeof(cursor))) {
             /* already exists */
             if (decl_ptr)
                 decl_ptr->struct_decl_idx = n;
