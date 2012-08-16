@@ -93,6 +93,7 @@
 
 typedef struct {
     char *type;
+    unsigned struct_decl_idx;
     char *name;
     unsigned n_ptrs; // 0 if not a pointer
     unsigned array_size; // 0 if no array
@@ -228,22 +229,49 @@ static char *concat_name(CXToken *tokens, unsigned int from, unsigned to)
     return str;
 }
 
+static void register_struct(const char *str, CXCursor cursor,
+                            TypedefDeclaration *decl_ptr);
+static void register_enum(const char *str, CXCursor cursor,
+                          TypedefDeclaration *decl_ptr);
+
+static enum CXChildVisitResult find_anon_struct(CXCursor cursor,
+                                                CXCursor parent,
+                                                CXClientData client_data)
+{
+    CXString cstr = clang_getCursorSpelling(cursor);
+    const char *str = clang_getCString(cstr);
+
+    switch (cursor.kind) {
+    case CXCursor_StructDecl:
+        register_struct(str, cursor, client_data);
+        break;
+    case CXCursor_EnumDecl:
+        register_enum(str, cursor, client_data);
+        break;
+    default:
+        break;
+    }
+
+    clang_disposeString(cstr);
+
+    return CXChildVisit_Continue;
+}
+
 static enum CXChildVisitResult fill_struct_members(CXCursor cursor,
                                                    CXCursor parent,
                                                    CXClientData client_data)
 {
     StructDeclaration *decl = (StructDeclaration *) client_data;
+    CXString cstr = clang_getCursorSpelling(cursor);
+    const char *str = clang_getCString(cstr);
 
-    // FIXME what happens when an anonymous struct is declared within
-    // another?
-
-    if (cursor.kind == CXCursor_FieldDecl) {
-        CXString cstr = clang_getCursorSpelling(cursor);
-        const char *str = clang_getCString(cstr);
+    switch (cursor.kind) {
+    case CXCursor_FieldDecl: {
         unsigned n = decl->n_entries, idx;
         CXToken *tokens = 0;
         unsigned int n_tokens = 0;
         CXSourceRange range = clang_getCursorExtent(cursor);
+        TypedefDeclaration td;
 
         // padding bitfields
         if (!strcmp(str, "")) {
@@ -313,15 +341,31 @@ static enum CXChildVisitResult fill_struct_members(CXCursor cursor,
             clang_disposeString(tstr);
         } while (0);
 
+        memset(&td, 0, sizeof(td));
+        td.struct_decl_idx = (unsigned) -1;
+        clang_visitChildren(cursor, find_anon_struct, &td);
+        decl->entries[n].struct_decl_idx = td.struct_decl_idx;
+
         // FIXME it's not hard to find the struct name (either because
         // tokens[idx-2-n_ptrs] == 'struct', or because tokens[idx-1-n_ptrs]
         // is a typedef for the struct name), and then we can use
         // find_struct_decl() to find the StructDeclaration belonging to
         // that type.
 
-        clang_disposeString(cstr);
         clang_disposeTokens(TU, tokens, n_tokens);
+        break;
     }
+    case CXCursor_StructDecl:
+        register_struct(str, cursor, NULL);
+        break;
+    case CXCursor_EnumDecl:
+        register_enum(str, cursor, NULL);
+        break;
+    default:
+        break;
+    }
+
+    clang_disposeString(cstr);
 
     return CXChildVisit_Continue;
 }
@@ -713,9 +757,19 @@ static unsigned find_encompassing_struct_decl(unsigned start, unsigned end,
                 *ptr = &struct_array_lists[n];
                 return struct_array_lists[n].struct_decl_idx;
             } else if (struct_array_lists[n].type == TYPE_STRUCT) {
-                // FIXME return type of that member
+                unsigned m;
+                StructArrayList *l = *ptr = &struct_array_lists[n];
+                for (m = 0; m <= l->n_entries; m++) {
+                    if (start >= l->entries[m].expression_offset.start &&
+                        end   <= l->entries[m].expression_offset.end) {
+                        unsigned s_idx = l->struct_decl_idx;
+                        unsigned m_idx = l->entries[m].index;
+                        return structs[s_idx].entries[m_idx].struct_decl_idx;
+                    }
+                }
                 return (unsigned) -1;
             } else {
+                // FIXME
                 return (unsigned) -1;
             }
         }
@@ -976,9 +1030,18 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
         break;
     }
     case CXCursor_StructDecl:
-        register_struct(clang_getCString(str), cursor,
-                        parent.kind == CXCursor_TypedefDecl ?
-                            rec.parent->data.td_decl : NULL);
+        if (parent.kind == CXCursor_TypedefDecl) {
+            register_struct(clang_getCString(str), cursor,
+                            rec.parent->data.td_decl);
+        } else if (parent.kind == CXCursor_VarDecl) {
+            TypedefDeclaration td;
+            memset(&td, 0, sizeof(td));
+            td.struct_decl_idx = (unsigned) -1;
+            register_struct(clang_getCString(str), cursor, &td);
+            rec.parent->data.struct_decl_idx = td.struct_decl_idx;
+        } else {
+            register_struct(clang_getCString(str), cursor, NULL);
+        }
         break;
     case CXCursor_EnumDecl:
         register_enum(clang_getCString(str), cursor,
@@ -1474,7 +1537,8 @@ static void replace_struct_array(unsigned *_saidx, unsigned *_clidx,
 
         if (val_idx == -1) {
             if (saidx < n_struct_array_lists - 1 &&
-                struct_array_lists[saidx + 1].level > struct_array_lists[saidx].level) {
+                struct_array_lists[saidx + 1].level > struct_array_lists[saidx].level &&
+                struct_array_lists[saidx + 1].struct_decl_idx == struct_array_lists[saidx].struct_decl_idx) {
                 print_literal_text("{}", lnum, cpos);
             } else {
                 print_literal_text("0", lnum, cpos);

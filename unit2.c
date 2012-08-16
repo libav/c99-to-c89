@@ -63,6 +63,13 @@ static const struct PixFmtInfo pix_fmt_info[] = {
     },
 };
 
+static const struct {
+    int a;
+    struct { int c, d; } b;
+} random_values2 = {
+    .b = { .d = 1, },
+};
+
 int main(int argc, char *argv[])
 {
     return pix_fmt_info[argc].depth;
