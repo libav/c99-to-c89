@@ -688,7 +688,7 @@ static unsigned find_struct_decl_idx(const char *var, CXToken *tokens,
         // a struct typedef declared in advance, whereas the struct itself
         // was declared separately. In that case, we should find the struct
         // declaration delayed, e.g. here/now.
-        if (td_decl && td_decl->struct_decl_idx)
+        if (td_decl && td_decl->struct_decl_idx != (unsigned) -1)
             return td_decl->struct_decl_idx;
     }
 
