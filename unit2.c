@@ -83,6 +83,20 @@ static const struct PixFmtInfo info2 = {
     3, COLOR_YUV_JPEG, PIX_FMT_YUVJ420P, .depth = 12
 };
 
+typedef struct {
+    const char *name;
+    struct {
+        void *dst_ptr;
+        int (*func_arg)(void);
+    } u;
+} OptionDef;
+
+static int do_nothing(void) { }
+static const OptionDef options[] = {
+  { "name", {(void*)0,},},
+  { "name2", {.func_arg=do_nothing,},},
+};
+
 int main(int argc, char *argv[])
 {
     return pix_fmt_info[argc].depth;
