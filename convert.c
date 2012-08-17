@@ -262,7 +262,8 @@ static enum CXChildVisitResult fill_struct_members(CXCursor cursor,
                                                    CXCursor parent,
                                                    CXClientData client_data)
 {
-    StructDeclaration *decl = (StructDeclaration *) client_data;
+    unsigned decl_idx = (unsigned) client_data;
+    StructDeclaration *decl = &structs[decl_idx];
     CXString cstr = clang_getCursorSpelling(cursor);
     const char *str = clang_getCString(cstr);
 
@@ -407,7 +408,7 @@ static void register_struct(const char *str, CXCursor cursor,
     decl->n_allocated_entries = 0;
     decl->entries = NULL;
 
-    clang_visitChildren(cursor, fill_struct_members, decl);
+    clang_visitChildren(cursor, fill_struct_members, (void *) (n_structs - 1));
 }
 
 static int arithmetic_expression(int val1, const char *expr, int val2)
@@ -1187,7 +1188,8 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
             clang_visitChildren(cursor, callback, &rec);
         } else {
             // another { val } or { .member = val } or { [index] = val }
-            StructArrayList *l, *parent = NULL;
+            StructArrayList *l;
+            unsigned parent_idx = (unsigned) -1;
 
             if (n_struct_array_lists == n_allocated_struct_array_lists) {
                 unsigned num = n_allocated_struct_array_lists + 16;
@@ -1211,6 +1213,7 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
                 l->array_depth     = rec.parent->data.var_decl_data.array_depth;
                 l->level = 0;
             } else {
+                StructArrayList *parent;
                 unsigned depth;
                 unsigned idx = find_encompassing_struct_decl(l->value_offset.start,
                                                              l->value_offset.end,
@@ -1251,13 +1254,16 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
                     sai->expression_offset.start = s;
                     sai->expression_offset.end   = e;
                     sai->index = rec.parent->child_cntr - 1;
+                    parent_idx = parent - struct_array_lists;
                 }
             }
 
             rec.data.l = l;
             clang_visitChildren(cursor, callback, &rec);
-            if (rec.parent->kind == CXCursor_InitListExpr && parent)
-                parent->n_entries++;
+            if (rec.parent->kind == CXCursor_InitListExpr &&
+                parent_idx != (unsigned) -1) {
+                struct_array_lists[parent_idx].n_entries++;
+            }
         }
         break;
     case CXCursor_UnexposedExpr:
@@ -1309,7 +1315,8 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
         }
         break;
     case CXCursor_MemberRef:
-        if (parent.kind == CXCursor_UnexposedExpr) {
+        if (parent.kind == CXCursor_UnexposedExpr &&
+            rec.parent->parent->kind == CXCursor_InitListExpr) {
             // designated initializer (struct)
             // .member = val
             //  ^^^^^^
@@ -1327,7 +1334,8 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
     case CXCursor_IntegerLiteral:
     case CXCursor_DeclRefExpr:
     case CXCursor_BinaryOperator:
-        if (parent.kind == CXCursor_UnexposedExpr && rec.parent->data.opaque) {
+        if (parent.kind == CXCursor_UnexposedExpr &&
+            rec.parent->parent->kind == CXCursor_InitListExpr) {
             CXString spelling = clang_getTokenSpelling(TU, tokens[n_tokens - 1]);
             if (!strcmp(clang_getCString(spelling), "]")) {
                 // [index] = { val }
@@ -1647,6 +1655,9 @@ static void replace_struct_array(unsigned *_saidx, unsigned *_clidx,
     // i.e. the '{', is already taken care of
     print_token(tokens[n++], lnum, cpos);
     indent_for_token(tokens[n], lnum, cpos, &off);
+
+    for (i = 0; i < struct_array_lists[saidx].n_entries; i++)
+      assert(struct_array_lists[saidx].entries[i].index != (unsigned) -1);
 
     for (j = 0, i = 0; i < struct_array_lists[saidx].n_entries; j++) {
         unsigned expr_off_s, expr_off_e, val_idx, val_off_s, val_off_e, saidx2,
