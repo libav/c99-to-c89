@@ -68,6 +68,19 @@ static const struct {
     struct { int c, d; } b;
 } random_values2 = {
     .b = { .d = 1, },
+}, random_values3 = {
+    0, { .d = 1, },
+};
+
+static const struct {
+    int a, b;
+} random_values[] = {
+    { .b = 1, },
+    [3] = { .b = 3 },
+};
+
+static const struct PixFmtInfo info2 = {
+    3, COLOR_YUV_JPEG, PIX_FMT_YUVJ420P, .depth = 12
 };
 
 int main(int argc, char *argv[])

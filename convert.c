@@ -96,7 +96,7 @@ typedef struct {
     unsigned struct_decl_idx;
     char *name;
     unsigned n_ptrs; // 0 if not a pointer
-    unsigned array_size; // 0 if no array
+    unsigned array_depth; // 0 if no array
     CXCursor cursor;
 } StructMember;
 
@@ -157,6 +157,7 @@ typedef struct {
 typedef struct {
     enum StructArrayType type;
     unsigned struct_decl_idx;
+    unsigned array_depth;
     StructArrayItem *entries;
     unsigned level;
     unsigned n_entries;
@@ -267,7 +268,7 @@ static enum CXChildVisitResult fill_struct_members(CXCursor cursor,
 
     switch (cursor.kind) {
     case CXCursor_FieldDecl: {
-        unsigned n = decl->n_entries, idx;
+        unsigned n = decl->n_entries, idx, m;
         CXToken *tokens = 0;
         unsigned int n_tokens = 0;
         CXSourceRange range = clang_getCursorExtent(cursor);
@@ -301,20 +302,17 @@ static enum CXChildVisitResult fill_struct_members(CXCursor cursor,
 
         idx = find_token_index(tokens, n_tokens, str);
         decl->entries[n].n_ptrs = 0;
-        do {
-            CXString tstr = clang_getTokenSpelling(TU, tokens[idx + 1]);
+        decl->entries[n].array_depth = 0;
+        for (m = idx + 1; m < n_tokens; m++) {
+            CXString tstr = clang_getTokenSpelling(TU, tokens[m]);
             const char *cstr = clang_getCString(tstr);
-            int res = strcmp(cstr, "[");
+            int res = strcmp(cstr, ";") && strcmp(cstr, ",");
+            if (!strcmp(cstr, "["))
+                decl->entries[n].array_depth++;
             clang_disposeString(tstr);
-            if (!res) {
-                CXString tstr = clang_getTokenSpelling(TU, tokens[idx + 2]);
-                const char *cstr = clang_getCString(tstr);
-                decl->entries[n].array_size = atoi(cstr);
-                clang_disposeString(tstr);
-            } else {
-                decl->entries[n].array_size = 0;
-            }
-        } while (0);
+            if (!res)
+                break;
+        }
 
         for (;;) {
             unsigned im1 = idx - 1 - decl->entries[n].n_ptrs;
@@ -382,6 +380,9 @@ static void register_struct(const char *str, CXCursor cursor,
             /* already exists */
             if (decl_ptr)
                 decl_ptr->struct_decl_idx = n;
+            // FIXME I believe structs can be declared without contents,
+            // like 'struct bla', with their actual contents being declared
+            // later. We should then fill this struct at the second attempt.
             return;
         }
     }
@@ -675,7 +676,7 @@ static TypedefDeclaration *find_typedef_decl_by_name(const char *name)
 // FIXME this function has some duplicate functionality compared to
 // fill_struct_members() further up.
 static unsigned find_struct_decl_idx(const char *var, CXToken *tokens,
-                                     unsigned n_tokens)
+                                     unsigned n_tokens, unsigned *depth)
 {
     /*
      * In the list of tokens that make up a sequence like:
@@ -688,6 +689,7 @@ static unsigned find_struct_decl_idx(const char *var, CXToken *tokens,
      */
     unsigned n, var_tok_idx;
 
+    *depth = 0;
     for (n = 0; n < n_tokens; n++) {
         CXString spelling = clang_getTokenSpelling(TU, tokens[n]);
         int res = strcmp(clang_getCString(spelling), var);
@@ -698,8 +700,18 @@ static unsigned find_struct_decl_idx(const char *var, CXToken *tokens,
     if (n == n_tokens)
         return (unsigned) -1;
 
-    // is it a struct?
     var_tok_idx = n;
+    for (n = var_tok_idx + 1; n < n_tokens; n++) {
+        CXString spelling = clang_getTokenSpelling(TU, tokens[n]);
+        int res = strcmp(clang_getCString(spelling), "=");
+        if (!strcmp(clang_getCString(spelling), "["))
+            (*depth)++;
+        clang_disposeString(spelling);
+        if (!res)
+            break;
+    }
+
+    // is it a struct?
     if (var_tok_idx > 1) {
         CXString spelling;
         int res;
@@ -734,45 +746,6 @@ static unsigned find_struct_decl_idx(const char *var, CXToken *tokens,
         // declaration delayed, e.g. here/now.
         if (td_decl && td_decl->struct_decl_idx != (unsigned) -1)
             return td_decl->struct_decl_idx;
-    }
-
-    return (unsigned) -1;
-}
-
-static unsigned find_encompassing_struct_decl(unsigned start, unsigned end,
-                                              StructArrayList **ptr)
-{
-    /*
-     * In previously registered arrays/structs, find one with a start-end
-     * that fully contains the given start/end function arguments. If found,
-     * return that array/struct's type. If not found, return NULL.
-     */
-    unsigned n;
-
-    *ptr = NULL;
-    for (n = 0; n < n_struct_array_lists; n++) {
-        if (start >= struct_array_lists[n].value_offset.start &&
-            end   <= struct_array_lists[n].value_offset.end) {
-            if (struct_array_lists[n].type == TYPE_ARRAY) {
-                *ptr = &struct_array_lists[n];
-                return struct_array_lists[n].struct_decl_idx;
-            } else if (struct_array_lists[n].type == TYPE_STRUCT) {
-                unsigned m;
-                StructArrayList *l = *ptr = &struct_array_lists[n];
-                for (m = 0; m <= l->n_entries; m++) {
-                    if (start >= l->entries[m].expression_offset.start &&
-                        end   <= l->entries[m].expression_offset.end) {
-                        unsigned s_idx = l->struct_decl_idx;
-                        unsigned m_idx = l->entries[m].index;
-                        return structs[s_idx].entries[m_idx].struct_decl_idx;
-                    }
-                }
-                return (unsigned) -1;
-            } else {
-                // FIXME
-                return (unsigned) -1;
-            }
-        }
     }
 
     return (unsigned) -1;
@@ -852,11 +825,94 @@ struct CursorRecursion {
         void *opaque;
         StructArrayList *l; // InitListExpr and UnexposedExpr
         // after an InitListExpr
-        unsigned struct_decl_idx; // VarDecl
+        struct {
+            unsigned struct_decl_idx;
+            unsigned array_depth;
+        } var_decl_data;             // VarDecl
         TypedefDeclaration *td_decl; // TypedefDecl
         CompoundLiteralList *cl_list; // CompoundLiteralExpr
     } data;
 };
+
+static unsigned find_encompassing_struct_decl(unsigned start, unsigned end,
+                                              StructArrayList **ptr,
+                                              CursorRecursion *rec,
+                                              unsigned *depth)
+{
+    /*
+     * In previously registered arrays/structs, find one with a start-end
+     * that fully contains the given start/end function arguments. If found,
+     * return that array/struct's type. If not found, return NULL.
+     */
+    unsigned n;
+
+    *depth = 0;
+    *ptr = NULL;
+    for (n = 0; n < n_struct_array_lists; n++) {
+        if (start >= struct_array_lists[n].value_offset.start &&
+            end   <= struct_array_lists[n].value_offset.end) {
+            if (struct_array_lists[n].type == TYPE_ARRAY) {
+                /* { <- parent
+                 *   [..] = { .. }, <- us
+                 * } */
+                assert(rec->parent->kind == CXCursor_UnexposedExpr &&
+                       rec->parent->parent->kind == CXCursor_InitListExpr);
+
+                *ptr = &struct_array_lists[n];
+                assert(struct_array_lists[n].array_depth > 0);
+                *depth = struct_array_lists[n].array_depth - 1;
+
+                return struct_array_lists[n].struct_decl_idx;
+            } else if (struct_array_lists[n].type == TYPE_STRUCT) {
+                /* { <- parent
+                 *   .member = { .. }, <- us
+                 * } */
+                unsigned m;
+                StructArrayList *l = *ptr = &struct_array_lists[n];
+
+                assert(rec->parent->kind == CXCursor_UnexposedExpr &&
+                       rec->parent->parent->kind == CXCursor_InitListExpr);
+                assert(l->array_depth == 0);
+                for (m = 0; m <= l->n_entries; m++) {
+                    if (start >= l->entries[m].expression_offset.start &&
+                        end   <= l->entries[m].expression_offset.end) {
+                        unsigned s_idx = l->struct_decl_idx;
+                        unsigned m_idx = l->entries[m].index;
+                        *depth = structs[s_idx].entries[m_idx].array_depth;
+                        return structs[s_idx].entries[m_idx].struct_decl_idx;
+                    }
+                }
+
+                // Can this ever trigger?
+                return (unsigned) -1;
+            } else if (rec->parent->kind == CXCursor_InitListExpr) {
+                /* { <- parent
+                 *   { .. }, <- us (so now the question is: array or struct?)
+                 * } */
+                StructArrayList *l = *ptr = &struct_array_lists[n];
+                unsigned s_idx = l->struct_decl_idx;
+                unsigned m_idx = rec->parent->child_cntr - 1;
+
+                assert(rec->parent->kind == CXCursor_InitListExpr);
+
+                if (l->array_depth > 0) {
+                    *depth = l->array_depth - 1;
+                    return l->struct_decl_idx;
+                } else {
+                    assert(s_idx != (unsigned) -1);
+                    assert(m_idx < structs[s_idx].n_entries);
+                    *depth = structs[s_idx].entries[m_idx].array_depth;
+                    return structs[s_idx].entries[m_idx].struct_decl_idx;
+                }
+            } else {
+                // Can this ever trigger?
+                return (unsigned) -1;
+            }
+        }
+    }
+
+    return (unsigned) -1;
+}
 
 static int is_const(CompoundLiteralList *l, CursorRecursion *rec)
 {
@@ -1038,7 +1094,7 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
             memset(&td, 0, sizeof(td));
             td.struct_decl_idx = (unsigned) -1;
             register_struct(clang_getCString(str), cursor, &td);
-            rec.parent->data.struct_decl_idx = td.struct_decl_idx;
+            rec.parent->data.var_decl_data.struct_decl_idx = td.struct_decl_idx;
         } else {
             register_struct(clang_getCString(str), cursor, NULL);
         }
@@ -1048,13 +1104,16 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
                       parent.kind == CXCursor_TypedefDecl ?
                             rec.parent->data.td_decl : NULL);
         break;
-    case CXCursor_VarDecl:
+    case CXCursor_VarDecl: {
         // e.g. static const struct <type> name { val }
         //      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-        rec.data.struct_decl_idx = find_struct_decl_idx(clang_getCString(str),
-                                                        tokens, n_tokens);
+        unsigned idx = find_struct_decl_idx(clang_getCString(str),
+                                            tokens, n_tokens,
+                                            &rec.data.var_decl_data.array_depth);
+        rec.data.var_decl_data.struct_decl_idx = idx;
         clang_visitChildren(cursor, callback, &rec);
         break;
+    }
     case CXCursor_CompoundLiteralExpr: {
         CompoundLiteralList *l;
 
@@ -1128,7 +1187,7 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
             clang_visitChildren(cursor, callback, &rec);
         } else {
             // another { val } or { .member = val } or { [index] = val }
-            StructArrayList *l;
+            StructArrayList *l, *parent = NULL;
 
             if (n_struct_array_lists == n_allocated_struct_array_lists) {
                 unsigned num = n_allocated_struct_array_lists + 16;
@@ -1147,16 +1206,19 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
             l->entries = NULL;
             l->value_offset.start = get_token_offset(tokens[0]);
             l->value_offset.end   = get_token_offset(tokens[n_tokens - 2]);
-            if (parent.kind == CXCursor_VarDecl) {
-                l->struct_decl_idx = rec.parent->data.struct_decl_idx;
+            if (rec.parent->kind == CXCursor_VarDecl) {
+                l->struct_decl_idx = rec.parent->data.var_decl_data.struct_decl_idx;
+                l->array_depth     = rec.parent->data.var_decl_data.array_depth;
                 l->level = 0;
             } else {
-                StructArrayList *parent;
+                unsigned depth;
                 unsigned idx = find_encompassing_struct_decl(l->value_offset.start,
                                                              l->value_offset.end,
-                                                             &parent);
+                                                             &parent, &rec,
+                                                             &depth);
                 l->level = parent ? parent->level + 1 : 0;
                 l->struct_decl_idx = idx;
+                l->array_depth = depth;
 
                 // FIXME if needed, if the parent is an InitListExpr also,
                 // here we could increment the parent l->n_entries to keep
@@ -1166,10 +1228,36 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
                 // E.g. { var, { var2, var3 }, var4 }
                 //      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ <- parent
                 //             ^^^^^^^^^^^^^^         <- cursor
+                if (rec.parent->kind == CXCursor_InitListExpr && parent) {
+                    unsigned s = l->value_offset.start;
+                    unsigned e = l->value_offset.end;
+                    StructArrayItem *sai;
+
+                    if (parent->n_entries == parent->n_allocated_entries) {
+                        unsigned num = parent->n_allocated_entries + 16;
+                        void *mem = realloc(parent->entries,
+                                            sizeof(*parent->entries) * num);
+                        if (!mem) {
+                          fprintf(stderr, "Failed to allocate str/arr entry mem\n");
+                          exit(1);
+                        }
+                        parent->entries = (StructArrayItem *) mem;
+                        parent->n_allocated_entries = num;
+                    }
+
+                    sai = &parent->entries[parent->n_entries];
+                    sai->value_offset.start = s;
+                    sai->value_offset.end   = e;
+                    sai->expression_offset.start = s;
+                    sai->expression_offset.end   = e;
+                    sai->index = rec.parent->child_cntr - 1;
+                }
             }
 
             rec.data.l = l;
             clang_visitChildren(cursor, callback, &rec);
+            if (rec.parent->kind == CXCursor_InitListExpr && parent)
+                parent->n_entries++;
         }
         break;
     case CXCursor_UnexposedExpr:
@@ -1212,6 +1300,7 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
                 clang_visitChildren(cursor, callback, &rec);
                 l->n_entries++;
             } else {
+                // I'm not sure this ever triggers?
                 clang_visitChildren(cursor, callback, &rec);
             }
             clang_disposeString(spelling);
@@ -1230,6 +1319,7 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
 
             assert(sai);
             assert(l->type == TYPE_STRUCT);
+            assert(l->struct_decl_idx != (unsigned) -1);
             sai->index = find_member_index_in_struct(&structs[l->struct_decl_idx],
                                                      member);
         }
@@ -1258,6 +1348,37 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
     default:
         clang_visitChildren(cursor, callback, &rec);
         break;
+    }
+
+    // default list filler for scalar (non-list) value types
+    if (rec.parent->kind == CXCursor_InitListExpr &&
+        cursor.kind != CXCursor_InitListExpr &&
+        cursor.kind != CXCursor_UnexposedExpr) {
+        unsigned s = get_token_offset(tokens[0]);
+        StructArrayItem *sai;
+        StructArrayList *parent = rec.parent->data.l;
+
+        if (parent != NULL) {
+            if (parent->n_entries == parent->n_allocated_entries) {
+                unsigned num = parent->n_allocated_entries + 16;
+                void *mem = realloc(parent->entries,
+                                    sizeof(*parent->entries) * num);
+                if (!mem) {
+                    fprintf(stderr, "Failed to allocate str/arr entry mem\n");
+                    exit(1);
+                }
+                parent->entries = (StructArrayItem *) mem;
+                parent->n_allocated_entries = num;
+            }
+
+            sai = &parent->entries[parent->n_entries];
+            sai->value_offset.start = s;
+            sai->value_offset.end   = s;
+            sai->expression_offset.start = s;
+            sai->expression_offset.end   = s;
+            sai->index = rec.parent->child_cntr - 1;
+            parent->n_entries++;
+        }
     }
 
     clang_disposeString(str);
@@ -1341,7 +1462,7 @@ static unsigned find_index_for_level(unsigned level, unsigned index,
 
     for (n = start; n < n_struct_array_lists; n++) {
         if (struct_array_lists[n].level < level) {
-            return n_struct_array_lists;
+            return n;
         } else if (struct_array_lists[n].level == level) {
             if (cnt++ == index)
                 return n;
@@ -1556,6 +1677,8 @@ static void replace_struct_array(unsigned *_saidx, unsigned *_clidx,
         val_token_end = find_token_for_offset(tokens, n_tokens, *_n, val_off_e);
         saidx2 = find_index_for_level(struct_array_lists[saidx].level + 1,
                                       val_idx, saidx + 1);
+        if (struct_array_lists[saidx2].level < struct_array_lists[saidx].level)
+            saidx2 = n_struct_array_lists;
 
         // adjust position
         get_token_position(tokens[val_token_start], lnum, cpos, &off);
@@ -1736,7 +1859,7 @@ static void cleanup(void)
                     m, structs[n].entries[m].name,
                     structs[n].entries[m].type,
                     structs[n].entries[m].n_ptrs,
-                    structs[n].entries[m].array_size);
+                    structs[n].entries[m].array_depth);
             free(structs[n].entries[m].type);
             free(structs[n].entries[m].name);
         }
