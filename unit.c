@@ -41,8 +41,10 @@ static int call_function(AVRational x)
 
     if ((res = call_function_3((AVRational) { 5, -5 }) > 0)) {
         return ((AVRational) { -8, 8 }).den;
-    } else
+    } else if (1 && (res = call_function_3((AVRational) { 6, -6 }) > 0)) {
         return call_function_3((AVRational) { -5, 5 });
+    } else
+        return 0;
 }
 
 #define lut_vals(x) x, x+1, x+2, x+3
@@ -69,7 +71,11 @@ int main(int argc, char *argv[])
     int var;
 
 #define X 3
-    call_function((AVRational){2, 2});
+    switch (argc) {
+    case 0:
+        call_function((AVRational){2, 2});
+        break;
+    }
     var = ((const int[2]){1,2})[argc];
     var = call_function((AVRational){1, 2});
     if (var == 0) return call_function((AVRational){X, 2});
