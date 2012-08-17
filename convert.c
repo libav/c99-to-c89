@@ -849,9 +849,11 @@ static unsigned find_encompassing_struct_decl(unsigned start, unsigned end,
 
     *depth = 0;
     *ptr = NULL;
-    for (n = 0; n < n_struct_array_lists; n++) {
+    for (n = n_struct_array_lists - 1; n != (unsigned) -1; n--) {
         if (start >= struct_array_lists[n].value_offset.start &&
-            end   <= struct_array_lists[n].value_offset.end) {
+            end   <= struct_array_lists[n].value_offset.end &&
+            !(start == struct_array_lists[n].value_offset.start &&
+              end   == struct_array_lists[n].value_offset.end)) {
             if (struct_array_lists[n].type == TYPE_ARRAY) {
                 /* { <- parent
                  *   [..] = { .. }, <- us
