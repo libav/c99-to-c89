@@ -1805,15 +1805,18 @@ static void cleanup(void)
 
     dprintf("N array/struct variables: %d\n", n_struct_array_lists);
     for (n = 0; n < n_struct_array_lists; n++) {
-        dprintf("[%d]: type=%d, struct=%d (%s), level=%d, n_entries=%d, range=%u-%u\n",
+        dprintf("[%d]: type=%d, struct=%d (%s), level=%d, n_entries=%d, range=%u-%u, depth=%u\n",
                 n, struct_array_lists[n].type,
                 struct_array_lists[n].struct_decl_idx,
                 struct_array_lists[n].struct_decl_idx != (unsigned) -1 ?
-                    structs[struct_array_lists[n].struct_decl_idx].name : "<none>",
+                    (structs[struct_array_lists[n].struct_decl_idx].name[0] ?
+                     structs[struct_array_lists[n].struct_decl_idx].name :
+                     "<anonymous>") : "<none>",
                 struct_array_lists[n].level,
                 struct_array_lists[n].n_entries,
                 struct_array_lists[n].value_offset.start,
-                struct_array_lists[n].value_offset.end);
+                struct_array_lists[n].value_offset.end,
+                struct_array_lists[n].array_depth);
         for (m = 0; m < struct_array_lists[n].n_entries; m++) {
             dprintf(" [%d]: idx=%d, range=%u-%u\n",
                     m, struct_array_lists[n].entries[m].index,
@@ -1866,11 +1869,12 @@ static void cleanup(void)
             dprintf("[%d]: <anonymous> (%p)\n", n, &structs[n]);
         }
         for (m = 0; m < structs[n].n_entries; m++) {
-            dprintf(" [%d]: %s (%s/%d/%d)\n",
+            dprintf(" [%d]: %s (%s/%d/%d/%u)\n",
                     m, structs[n].entries[m].name,
                     structs[n].entries[m].type,
                     structs[n].entries[m].n_ptrs,
-                    structs[n].entries[m].array_depth);
+                    structs[n].entries[m].array_depth,
+                    structs[n].entries[m].struct_decl_idx);
             free(structs[n].entries[m].type);
             free(structs[n].entries[m].name);
         }
