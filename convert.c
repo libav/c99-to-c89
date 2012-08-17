@@ -170,6 +170,8 @@ static StructArrayList *struct_array_lists = NULL;
 static unsigned n_struct_array_lists = 0;
 static unsigned n_allocated_struct_array_lists = 0;
 
+static FILE *out;
+
 static CXTranslationUnit TU;
 
 #define DEBUG 0
@@ -1419,15 +1421,15 @@ static void indent_for_token(CXToken token, unsigned *lnum,
     unsigned l, p;
     get_token_position(token, &l, &p, off);
     for (; *lnum < l; (*lnum)++, *pos = 0)
-        printf("\n");
+        fprintf(out, "\n");
     for (; *pos < p; (*pos)++)
-        printf(" ");
+        fprintf(out, " ");
 }
 
 static void print_literal_text(const char *str, unsigned *lnum,
                                unsigned *pos)
 {
-    printf("%s", str);
+    fprintf(out, "%s", str);
     (*pos) += strlen(str);
 }
 
@@ -1788,7 +1790,7 @@ static void print_tokens(CXToken *tokens, unsigned n_tokens)
     }
 
     // each file ends with a newline
-    printf("\n");
+    fprintf(out, "\n");
 }
 
 static void cleanup(void)
@@ -1908,7 +1910,7 @@ static void cleanup(void)
 #define DEBUG 0
 }
 
-int main(int argc, char *argv[])
+int convert(const char *infile, const char *outfile)
 {
     CXIndex index;
     unsigned n_tokens;
@@ -1917,13 +1919,13 @@ int main(int argc, char *argv[])
     CXCursor cursor;
     CursorRecursion rec;
 
-    if (argc != 2) {
-        fprintf(stderr, "Usage: %s <file>\n", argv[0]);
-        exit(1);
+    out    = fopen(outfile, "w");
+    if (!out) {
+        fprintf(stderr, "Unable to open output file %s\n", outfile);
+        return 1;
     }
-
     index  = clang_createIndex(1, 1);
-    TU     = clang_createTranslationUnitFromSourceFile(index, argv[1], 0,
+    TU     = clang_createTranslationUnitFromSourceFile(index, infile, 0,
                                                        NULL, 0, NULL);
     cursor = clang_getTranslationUnitCursor(TU);
     range  = clang_getCursorExtent(cursor);
@@ -1941,6 +1943,16 @@ int main(int argc, char *argv[])
     clang_disposeIndex(index);
 
     cleanup();
+    fclose(out);
 
     return 0;
+}
+
+int main(int argc, char *argv[])
+{
+    if (argc < 3) {
+        fprintf(stderr, "%s <in> <out>\n", argv[0]);
+        return 1;
+    }
+    return convert(argv[1], argv[2]);
 }
