@@ -4,8 +4,8 @@ OBJS = convert.o
 
 CC=/opt/local/bin/clang-mp-3.2
 LD=$(CC)
-CFLAGS=-I/opt/local/libexec/llvm-3.2/include
-LDFLAGS=-L/opt/local/libexec/llvm-3.2/lib
+CFLAGS=-I/opt/local/libexec/llvm-3.2/include -g
+LDFLAGS=-L/opt/local/libexec/llvm-3.2/lib -g
 LIBS=-lclang
 
 clean:
