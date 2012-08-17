@@ -30,5 +30,8 @@ test3: converter
 converter: $(OBJS)
 	$(LD) -o $@ $< $(LDFLAGS) $(LIBS)
 
+compilewrap: compilewrap.o
+	$(LD) -o $@ $< $(LDFLAGS)
+
 convert.o: convert.c
 	$(CC) $(CFLAGS) -o $@ -c $<
