@@ -967,6 +967,7 @@ static CursorRecursion *find_var_decl_context(CursorRecursion *rec)
         case CXCursor_BinaryOperator:
             // FIXME: switch/case/default, do, while, for
             if ((p->parent->kind == CXCursor_IfStmt && p->child_cntr > 1) ||
+                (p->parent->kind == CXCursor_CaseStmt && p->child_cntr > 1) ||
                 p->parent->kind == CXCursor_CompoundStmt) {
                 return p;
             }
