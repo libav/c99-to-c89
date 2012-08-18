@@ -1774,10 +1774,11 @@ static void replace_struct_array(unsigned *_saidx, unsigned *_clidx,
 
         val_idx = find_value_index(&struct_array_lists[saidx], j);
 
+        assert(struct_array_lists[saidx].array_depth > 0 ||
+               j < structs[struct_array_lists[saidx].struct_decl_idx].n_entries);
         if (val_idx == (unsigned) -1) {
-            if (saidx < n_struct_array_lists - 1 &&
-                struct_array_lists[saidx + 1].level > struct_array_lists[saidx].level &&
-                struct_array_lists[saidx + 1].struct_decl_idx == struct_array_lists[saidx].struct_decl_idx) {
+            if (struct_array_lists[saidx].array_depth ||
+                structs[struct_array_lists[saidx].struct_decl_idx].entries[j].array_depth) {
                 print_literal_text("{}", lnum, cpos);
             } else {
                 print_literal_text("0", lnum, cpos);
