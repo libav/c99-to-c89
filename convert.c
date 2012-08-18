@@ -674,10 +674,13 @@ static unsigned find_struct_decl_idx_by_name(const char *name)
 static unsigned find_struct_decl_idx_for_type_name(const char *name);
 static void resolve_proxy(TypedefDeclaration *decl)
 {
-    if (decl->struct_decl_idx != (unsigned) -1)
+    if (decl->struct_decl_idx != (unsigned) -1 ||
+        decl->enum_decl_idx != (unsigned) -1)
         return;
 
     decl->struct_decl_idx = find_struct_decl_idx_for_type_name(decl->proxy);
+    // we could theoretically also resolve the enum, but we wouldn't use
+    // that information, so let's just not
 }
 
 static TypedefDeclaration *find_typedef_decl_by_name(const char *name)
@@ -1928,8 +1931,9 @@ static void cleanup(void)
         } else {
             dprintf("[%d]: %s (%s)\n",
                     n, typedefs[n].name, typedefs[n].proxy);
-            free(typedefs[n].proxy);
         }
+        if (typedefs[n].proxy)
+            free(typedefs[n].proxy);
         free(typedefs[n].name);
     }
     free(typedefs);
