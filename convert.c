@@ -1325,9 +1325,9 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
             CXString spelling = clang_getTokenSpelling(TU, tokens[0]);
             const char *istr = clang_getCString(spelling);
             StructArrayList *l = rec.parent->data.l;
+            StructArrayItem *sai;
 
             if (!strcmp(istr, "[") || !strcmp(istr, ".")) {
-                StructArrayItem *sai;
                 enum StructArrayType exp_type = istr[0] == '.' ?
                                                 TYPE_STRUCT : TYPE_ARRAY;
                 // [index] = val   or   .member = val
@@ -1338,31 +1338,35 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
                     fprintf(stderr, "Mixed struct/array!\n");
                     exit(1);
                 }
-
-                if (l->n_entries == l->n_allocated_entries) {
-                    unsigned num = l->n_allocated_entries + 16;
-                    void *mem = realloc(l->entries, sizeof(*l->entries) * num);
-                    if (!mem) {
-                        fprintf(stderr, "Failed to allocate str/arr entry mem\n");
-                        exit(1);
-                    }
-                    l->entries = (StructArrayItem *) mem;
-                    l->n_allocated_entries = num;
-                }
-
-                sai = &l->entries[l->n_entries];
-                sai->index = 0;
-                sai->expression_offset.start = get_token_offset(tokens[0]);
-                sai->expression_offset.end   = get_token_offset(tokens[n_tokens - 2]);
-                sai->value_offset.start = get_token_offset(tokens[3 + (istr[0] == '[')]);
-                sai->value_offset.end   = get_token_offset(tokens[n_tokens - 2]);
-                rec.data.l = l;
-                clang_visitChildren(cursor, callback, &rec);
-                l->n_entries++;
-            } else {
-                // I'm not sure this ever triggers?
-                clang_visitChildren(cursor, callback, &rec);
             }
+
+            if (l->n_entries == l->n_allocated_entries) {
+                unsigned num = l->n_allocated_entries + 16;
+                void *mem = realloc(l->entries, sizeof(*l->entries) * num);
+                if (!mem) {
+                    fprintf(stderr, "Failed to allocate str/arr entry mem\n");
+                    exit(1);
+                }
+                l->entries = (StructArrayItem *) mem;
+                l->n_allocated_entries = num;
+            }
+
+            sai = &l->entries[l->n_entries];
+            sai->index = l->n_entries ? l->entries[l->n_entries - 1].index + 1 : 0;
+            sai->expression_offset.start = get_token_offset(tokens[0]);
+            sai->expression_offset.end   = get_token_offset(tokens[n_tokens - 2]);
+            if (!strcmp(istr, ".")) {
+                sai->value_offset.start = get_token_offset(tokens[3]);
+            } else if (!strcmp(istr, "[")) {
+                // FIXME this can be wrong
+                sai->value_offset.start = get_token_offset(tokens[4]);
+            } else {
+                sai->value_offset.start = get_token_offset(tokens[0]);
+            }
+            sai->value_offset.end   = get_token_offset(tokens[n_tokens - 2]);
+            rec.data.l = l;
+            clang_visitChildren(cursor, callback, &rec);
+            l->n_entries++;
             clang_disposeString(spelling);
         } else {
             clang_visitChildren(cursor, callback, &rec);
@@ -1729,7 +1733,7 @@ static void replace_struct_array(unsigned *_saidx, unsigned *_clidx,
 
         val_idx = find_value_index(&struct_array_lists[saidx], j);
 
-        if (val_idx == -1) {
+        if (val_idx == (unsigned) -1) {
             if (saidx < n_struct_array_lists - 1 &&
                 struct_array_lists[saidx + 1].level > struct_array_lists[saidx].level &&
                 struct_array_lists[saidx + 1].struct_decl_idx == struct_array_lists[saidx].struct_decl_idx) {
