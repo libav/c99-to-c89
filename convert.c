@@ -471,31 +471,41 @@ static int find_enum_value(const char *str)
     exit(1);
 }
 
+typedef struct FillEnumMemberCache {
+    int n[3];
+    char *op;
+} FillEnumMemberCache;
+
 static enum CXChildVisitResult fill_enum_value(CXCursor cursor,
                                                CXCursor parent,
                                                CXClientData client_data)
 {
-    int *ptr = (int *) client_data;
+    FillEnumMemberCache *cache = (FillEnumMemberCache *) client_data;
     CXToken *tokens = 0;
     unsigned int n_tokens = 0;
     CXSourceRange range = clang_getCursorExtent(cursor);
 
     clang_tokenize(TU, range, &tokens, &n_tokens);
+    if (parent.kind == CXCursor_BinaryOperator && cache->n[0] == 0) {
+        CXString str = clang_getTokenSpelling(TU, tokens[n_tokens - 1]);
+        cache->op = strdup(clang_getCString(str));
+        clang_disposeString(str);
+    }
 
     switch (cursor.kind) {
     case CXCursor_BinaryOperator: {
-        int cache[3] = { 0 };
+        FillEnumMemberCache cache2;
         CXString tsp;
 
+        memset(&cache2, 0, sizeof(cache2));
         assert(n_tokens >= 4);
-        // FIXME which token is the arithmetic operator?
-        tsp = clang_getTokenSpelling(TU, tokens[1]);
-        clang_visitChildren(cursor, fill_enum_value, cache);
-        assert(cache[0] == 2);
-        ptr[++ptr[0]] = arithmetic_expression(cache[1],
-                                              clang_getCString(tsp),
-                                              cache[2]);
-        clang_disposeString(tsp);
+        clang_visitChildren(cursor, fill_enum_value, &cache2);
+        assert(cache2.n[0] == 2);
+        assert(cache2.op != NULL);
+        cache->n[++cache->n[0]] = arithmetic_expression(cache2.n[1],
+                                                        cache2.op,
+                                                        cache2.n[2]);
+        free(cache2.op);
         break;
     }
     case CXCursor_IntegerLiteral: {
@@ -503,7 +513,7 @@ static enum CXChildVisitResult fill_enum_value(CXCursor cursor,
 
         assert(n_tokens == 2);
         tsp = clang_getTokenSpelling(TU, tokens[0]);
-        ptr[++ptr[0]] = atoi(clang_getCString(tsp));
+        cache->n[++cache->n[0]] = atoi(clang_getCString(tsp));
         clang_disposeString(tsp);
         break;
     }
@@ -512,7 +522,7 @@ static enum CXChildVisitResult fill_enum_value(CXCursor cursor,
 
         assert(n_tokens == 2);
         tsp = clang_getTokenSpelling(TU, tokens[0]);
-        ptr[++ptr[0]] = find_enum_value(clang_getCString(tsp));
+        cache->n[++cache->n[0]] = find_enum_value(clang_getCString(tsp));
         clang_disposeString(tsp);
         break;
     }
@@ -538,8 +548,9 @@ static enum CXChildVisitResult fill_enum_members(CXCursor cursor,
         CXString cstr = clang_getCursorSpelling(cursor);
         const char *str = clang_getCString(cstr);
         unsigned n = decl->n_entries;
-        int cache[3] = { 0 };
+        FillEnumMemberCache cache;
 
+        memset(&cache, 0, sizeof(cache));
         if (decl->n_entries == decl->n_allocated_entries) {
             unsigned num = decl->n_allocated_entries + 16;
             void *mem = realloc(decl->entries,
@@ -556,10 +567,10 @@ static enum CXChildVisitResult fill_enum_members(CXCursor cursor,
 
         decl->entries[n].name = strdup(str);
         decl->entries[n].cursor = cursor;
-        clang_visitChildren(cursor, fill_enum_value, cache);
-        assert(cache[0] <= 1);
-        if (cache[0] == 1) {
-            decl->entries[n].value = cache[1];
+        clang_visitChildren(cursor, fill_enum_value, &cache);
+        assert(cache.n[0] <= 1);
+        if (cache.n[0] == 1) {
+            decl->entries[n].value = cache.n[1];
         } else if (n == 0) {
             decl->entries[n].value = 0;
         } else {
@@ -1405,15 +1416,16 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
             if (!strcmp(clang_getCString(spelling), "]")) {
                 // [index] = { val }
                 //  ^^^^^
-                int cache[3] = { 0 };
+                FillEnumMemberCache cache;
                 StructArrayList *l = (StructArrayList *) rec.parent->data.l;
                 StructArrayItem *sai = &l->entries[l->n_entries];
 
-                fill_enum_value(cursor, parent, cache);
-                assert(cache[0] == 1);
+                memset(&cache, 0, sizeof(cache));
+                fill_enum_value(cursor, parent, &cache);
+                assert(cache.n[0] == 1);
                 assert(sai);
                 assert(l->type == TYPE_ARRAY);
-                sai->index = cache[1];
+                sai->index = cache.n[1];
             }
             clang_disposeString(spelling);
         } else if (cursor.kind != CXCursor_BinaryOperator)
