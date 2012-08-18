@@ -378,14 +378,17 @@ static void register_struct(const char *str, CXCursor cursor,
     StructDeclaration *decl;
 
     for (n = 0; n < n_structs; n++) {
-        if (!strcmp(structs[n].name, str) &&
+        if ((str[0] != 0 && !strcmp(structs[n].name, str)) ||
             !memcmp(&cursor, &structs[n].cursor, sizeof(cursor))) {
             /* already exists */
             if (decl_ptr)
                 decl_ptr->struct_decl_idx = n;
-            // FIXME I believe structs can be declared without contents,
-            // like 'struct bla', with their actual contents being declared
-            // later. We should then fill this struct at the second attempt.
+            if (structs[n].n_entries == 0) {
+                // Fill in structs that were defined (empty) earlier, i.e.
+                // 'struct AVFilterPad;', followed by the full declaration
+                // 'struct AVFilterPad { ... };'
+                clang_visitChildren(cursor, fill_struct_members, (void *) n);
+            }
             return;
         }
     }
@@ -664,13 +667,24 @@ static unsigned find_struct_decl_idx_by_name(const char *name)
     return (unsigned) -1;
 }
 
+static unsigned find_struct_decl_idx_for_type_name(const char *name);
+static void resolve_proxy(TypedefDeclaration *decl)
+{
+    if (decl->struct_decl_idx != (unsigned) -1)
+        return;
+
+    decl->struct_decl_idx = find_struct_decl_idx_for_type_name(decl->proxy);
+}
+
 static TypedefDeclaration *find_typedef_decl_by_name(const char *name)
 {
     unsigned n;
 
     for (n = 0; n < n_typedefs; n++) {
-        if (!strcmp(name, typedefs[n].name))
+        if (!strcmp(name, typedefs[n].name)) {
+            resolve_proxy(&typedefs[n]);
             return &typedefs[n];
+        }
     }
 
     return NULL;
@@ -743,10 +757,6 @@ static unsigned find_struct_decl_idx(const char *var, CXToken *tokens,
         td_decl = find_typedef_decl_by_name(clang_getCString(spelling));
         clang_disposeString(spelling);
 
-        // FIXME if struct_decl is not set but proxy is, then it may be
-        // a struct typedef declared in advance, whereas the struct itself
-        // was declared separately. In that case, we should find the struct
-        // declaration delayed, e.g. here/now.
         if (td_decl && td_decl->struct_decl_idx != (unsigned) -1)
             return td_decl->struct_decl_idx;
     }
@@ -769,6 +779,9 @@ static unsigned find_member_index_in_struct(StructDeclaration *str_decl,
 
 static unsigned find_struct_decl_idx_for_type_name(const char *name)
 {
+    if (!strncmp(name, "const ", 6))
+        name += 6;
+
     if (!strncmp(name, "struct ", 7)) {
         return find_struct_decl_idx_by_name(name + 7);
     } else {
@@ -1024,6 +1037,55 @@ static void analyze_compound_literal_lineage(CompoundLiteralList *l,
     }
 }
 
+static void get_comp_literal_type_info(StructArrayList *sal,
+                                       CompoundLiteralList *cl,
+                                       CXToken *tokens, unsigned n_tokens,
+                                       unsigned start, unsigned end)
+{
+    // FIXME also see find_struct_decl_idx()
+    unsigned type_tok_idx = (unsigned) -1, array_tok_idx = (unsigned) -1,
+             end_tok_idx = (unsigned) -1, n;
+    char *type;
+
+    for (n = 0; n < n_tokens; n++) {
+        unsigned off = get_token_offset(tokens[n]);
+        if (off == cl->cast_token.start) {
+            type_tok_idx = n + 1;
+        } else if (off == cl->cast_token.end) {
+            end_tok_idx = n;
+        }
+        if (off == cl->cast_token_array_start) {
+            array_tok_idx = n;
+        }
+    }
+    assert(array_tok_idx != (unsigned) -1 &&
+           end_tok_idx != (unsigned) -1 &&
+           type_tok_idx != (unsigned) -1);
+
+    sal->array_depth = 0;
+    for (n = array_tok_idx; n < end_tok_idx; n++) {
+        CXString spelling = clang_getTokenSpelling(TU, tokens[n]);
+        int res = strcmp(clang_getCString(spelling), "[");
+        clang_disposeString(spelling);
+        if (!res)
+            sal->array_depth++;
+    }
+    type = concat_name(tokens, type_tok_idx, array_tok_idx - 1);
+    sal->struct_decl_idx = find_struct_decl_idx_for_type_name(type);
+    free(type);
+
+    sal->level = 0;
+    for (n = n_struct_array_lists - 1; n != (unsigned) -1; n--) {
+        if (start >= struct_array_lists[n].value_offset.start &&
+            end   <= struct_array_lists[n].value_offset.end &&
+            !(start == struct_array_lists[n].value_offset.start &&
+              end   == struct_array_lists[n].value_offset.end)) {
+                sal->level = struct_array_lists[n].level + 1;
+                return;
+        }
+    }
+}
+
 static unsigned get_n_tokens(CXToken *tokens, unsigned n_tokens)
 {
     /* clang will set n_tokens to the number including the start of the
@@ -1147,28 +1209,6 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
         analyze_compound_literal_lineage(l, &rec);
         break;
     }
-    case CXCursor_TypeRef:
-        if (parent.kind == CXCursor_CompoundLiteralExpr) {
-            CompoundLiteralList *l = rec.parent->data.cl_list;
-            unsigned n;
-
-            // (type) { val }
-            //  ^^^^
-            l->cast_token.end = get_token_offset(tokens[n_tokens - 1]);
-            l->struct_decl_idx = find_struct_decl_idx_for_type_name(clang_getCString(str));
-            l->cast_token_array_start = l->cast_token.end;
-            for (n = 1; n < n_tokens - 1; n++) {
-                CXString spelling = clang_getTokenSpelling(TU, tokens[n]);
-                int res = strcmp(clang_getCString(spelling), "[");
-                clang_disposeString(spelling);
-                if (!res) {
-                    l->cast_token_array_start = get_token_offset(tokens[n]);
-                    break;
-                }
-            }
-        }
-        clang_visitChildren(cursor, callback, &rec);
-        break;
     case CXCursor_InitListExpr:
         if (parent.kind == CXCursor_CompoundLiteralExpr) {
             CompoundLiteralList *l = rec.parent->data.cl_list;
@@ -1194,8 +1234,8 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
                 if (!l->cast_token_array_start)
                     l->cast_token_array_start = l->cast_token.end;
             }
-            clang_visitChildren(cursor, callback, &rec);
-        } else {
+        }
+        {
             // another { val } or { .member = val } or { [index] = val }
             StructArrayList *l;
             unsigned parent_idx = (unsigned) -1;
@@ -1221,6 +1261,12 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
                 l->struct_decl_idx = rec.parent->data.var_decl_data.struct_decl_idx;
                 l->array_depth     = rec.parent->data.var_decl_data.array_depth;
                 l->level = 0;
+            } else if (rec.parent->kind == CXCursor_CompoundLiteralExpr) {
+                get_comp_literal_type_info(l, rec.parent->data.cl_list,
+                                           rec.parent->tokens,
+                                           rec.parent->n_tokens,
+                                           l->value_offset.start,
+                                           l->value_offset.end);
             } else {
                 StructArrayList *parent;
                 unsigned depth;
@@ -1515,12 +1561,18 @@ static void reorder_compound_literal_list(unsigned n)
     }
 }
 
+static void print_token_wrapper(CXToken *tokens, unsigned n_tokens,
+                                unsigned *n, unsigned *lnum, unsigned *cpos,
+                                unsigned *saidx, unsigned *clidx,
+                                unsigned off);
+
 static void declare_variable(CompoundLiteralList *l, unsigned cur_tok_off,
+                             unsigned *clidx, unsigned *_saidx,
                              CXToken *tokens, unsigned n_tokens,
                              const char *var_name, unsigned *lnum,
                              unsigned *cpos)
 {
-    unsigned idx1, idx2, off, n;
+    unsigned idx1, idx2, off, n, saidx = *_saidx;
 
     /* type information, e.g. 'int' or 'struct AVRational' */
     idx1 = find_token_for_offset(tokens, n_tokens, cur_tok_off,
@@ -1550,13 +1602,18 @@ static void declare_variable(CompoundLiteralList *l, unsigned cur_tok_off,
     idx2 = find_token_for_offset(tokens, n_tokens, cur_tok_off,
                                  l->value_token.end);
     get_token_position(tokens[idx1], lnum, cpos, &off);
+    while (saidx < n_struct_array_lists &&
+           struct_array_lists[saidx].value_offset.start < off)
+        saidx++;
     for (n = idx1; n <= idx2; n++) {
         indent_for_token(tokens[n], lnum, cpos, &off);
-        print_token(tokens[n], lnum, cpos);
+        print_token_wrapper(tokens, n_tokens, &n, lnum, cpos,
+                            &saidx, clidx, off);
     }
 }
 
-static void replace_comp_literal(CompoundLiteralList *l, unsigned *clidx,
+static void replace_comp_literal(CompoundLiteralList *l,
+                                 unsigned *clidx, unsigned *saidx,
                                  unsigned *lnum, unsigned *cpos, unsigned *_n,
                                  CXToken *tokens, unsigned n_tokens)
 {
@@ -1578,7 +1635,8 @@ static void replace_comp_literal(CompoundLiteralList *l, unsigned *clidx,
             print_literal_text("{ ", lnum, cpos);
             snprintf(tmp, sizeof(tmp), "tmp__%u", unique_cntr++);
             l->data.t_c_d.tmp_var_name = strdup(tmp);
-            declare_variable(l, *_n, tokens, n_tokens, tmp, lnum, cpos);
+            declare_variable(l, *_n, clidx, saidx,
+                             tokens, n_tokens, tmp, lnum, cpos);
             print_literal_text("; ", lnum, cpos);
 
             // re-insert in list now for replacement of the variable
@@ -1621,7 +1679,8 @@ static void replace_comp_literal(CompoundLiteralList *l, unsigned *clidx,
             print_literal_text("static ", lnum, cpos);
             snprintf(tmp, sizeof(tmp), "tmp__%u", unique_cntr++);
             l->data.t_c_d.tmp_var_name = strdup(tmp);
-            declare_variable(l, *_n, tokens, n_tokens, tmp, lnum, cpos);
+            declare_variable(l, *_n, clidx, saidx,
+                             tokens, n_tokens, tmp, lnum, cpos);
             print_literal_text(";", lnum, cpos);
 
             // re-insert in list now for replacement of the variable
@@ -1647,11 +1706,6 @@ static void replace_comp_literal(CompoundLiteralList *l, unsigned *clidx,
         }
     }
 }
-
-static void print_token_wrapper(CXToken *tokens, unsigned n_tokens,
-                                unsigned *n, unsigned *lnum, unsigned *cpos,
-                                unsigned *saidx, unsigned *clidx,
-                                unsigned off);
 
 static void replace_struct_array(unsigned *_saidx, unsigned *_clidx,
                                  unsigned *lnum, unsigned *cpos, unsigned *_n,
@@ -1748,6 +1802,10 @@ static void print_token_wrapper(CXToken *tokens, unsigned n_tokens,
                                 unsigned *saidx, unsigned *clidx,
                                 unsigned off)
 {
+    while (*saidx < n_struct_array_lists &&
+           struct_array_lists[*saidx].value_offset.start < off)
+        (*saidx)++;
+
     if (*saidx < n_struct_array_lists &&
         off == struct_array_lists[*saidx].value_offset.start) {
         if (struct_array_lists[*saidx].type == TYPE_IRRELEVANT ||
@@ -1764,7 +1822,7 @@ static void print_token_wrapper(CXToken *tokens, unsigned n_tokens,
             print_token(tokens[*n], lnum, cpos);
         } else {
             replace_comp_literal(&comp_literal_lists[*clidx],
-                                 clidx, lnum, cpos, n,
+                                 clidx, saidx, lnum, cpos, n,
                                  tokens, n_tokens);
         }
         while (*clidx < n_comp_literal_lists &&

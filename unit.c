@@ -66,6 +66,20 @@ static AVCodec decoder = {
     .decode = call_function,
 };
 
+typedef struct AVFilterPad {
+    const char *name;
+} AVFilterPad;
+
+typedef struct AVFilter {
+    const char *name;
+    const AVFilterPad *inputs;
+} AVFilter;
+
+AVFilter filter = {
+    .name = "filter",
+    .inputs = (const AVFilterPad[]) {{.name="pad",},{.name=(void*)0,},},
+};
+
 int main(int argc, char *argv[])
 {
     int var;
