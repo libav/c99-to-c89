@@ -869,14 +869,14 @@ struct CursorRecursion {
     unsigned n_tokens;
     union {
         void *opaque;
-        StructArrayList *l; // InitListExpr and UnexposedExpr
-        // after an InitListExpr
+        unsigned sal_idx;            // InitListExpr and UnexposedExpr
+                                     // after an InitListExpr
         struct {
             unsigned struct_decl_idx;
             unsigned array_depth;
         } var_decl_data;             // VarDecl
         TypedefDeclaration *td_decl; // TypedefDecl
-        CompoundLiteralList *cl_list; // CompoundLiteralExpr
+        unsigned cl_idx;             // CompoundLiteralExpr
     } data;
 };
 
@@ -1242,7 +1242,7 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
         }
         l = &comp_literal_lists[n_comp_literal_lists++];
         memset(l, 0, sizeof(*l));
-        rec.data.cl_list = l;
+        rec.data.cl_idx = n_comp_literal_lists - 1;
         l->cast_token.start = get_token_offset(tokens[0]);
         l->struct_decl_idx = (unsigned) -1;
         clang_visitChildren(cursor, callback, &rec);
@@ -1251,7 +1251,7 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
     }
     case CXCursor_InitListExpr:
         if (parent.kind == CXCursor_CompoundLiteralExpr) {
-            CompoundLiteralList *l = rec.parent->data.cl_list;
+            CompoundLiteralList *l = &comp_literal_lists[rec.parent->data.cl_idx];
 
             // (type) { val }
             //        ^^^^^^^
@@ -1302,7 +1302,8 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
                 l->array_depth     = rec.parent->data.var_decl_data.array_depth;
                 l->level = 0;
             } else if (rec.parent->kind == CXCursor_CompoundLiteralExpr) {
-                get_comp_literal_type_info(l, rec.parent->data.cl_list,
+                CompoundLiteralList *cl = &comp_literal_lists[rec.parent->data.cl_idx];
+                get_comp_literal_type_info(l, cl,
                                            rec.parent->tokens,
                                            rec.parent->n_tokens,
                                            l->value_offset.start,
@@ -1352,7 +1353,7 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
                 }
             }
 
-            rec.data.l = l;
+            rec.data.sal_idx = n_struct_array_lists - 1;
             clang_visitChildren(cursor, callback, &rec);
             if (rec.parent->kind == CXCursor_InitListExpr &&
                 parent_idx != (unsigned) -1) {
@@ -1364,7 +1365,7 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
         if (parent.kind == CXCursor_InitListExpr) {
             CXString spelling = clang_getTokenSpelling(TU, tokens[0]);
             const char *istr = clang_getCString(spelling);
-            StructArrayList *l = rec.parent->data.l;
+            StructArrayList *l = &struct_array_lists[rec.parent->data.sal_idx];
             StructArrayItem *sai;
 
             if (!strcmp(istr, "[") || !strcmp(istr, ".")) {
@@ -1404,7 +1405,7 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
                 sai->value_offset.start = get_token_offset(tokens[0]);
             }
             sai->value_offset.end   = get_token_offset(tokens[n_tokens - 2]);
-            rec.data.l = l;
+            rec.data.sal_idx = rec.parent->data.sal_idx;
             clang_visitChildren(cursor, callback, &rec);
             l->n_entries++;
             clang_disposeString(spelling);
@@ -1418,7 +1419,7 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
             // designated initializer (struct)
             // .member = val
             //  ^^^^^^
-            StructArrayList *l = rec.parent->data.l;
+            StructArrayList *l = &struct_array_lists[rec.parent->data.sal_idx];
             StructArrayItem *sai = &l->entries[l->n_entries];
             const char *member = clang_getCString(str);
 
@@ -1439,7 +1440,7 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
                 // [index] = { val }
                 //  ^^^^^
                 FillEnumMemberCache cache;
-                StructArrayList *l = (StructArrayList *) rec.parent->data.l;
+                StructArrayList *l = &struct_array_lists[rec.parent->data.sal_idx];
                 StructArrayItem *sai = &l->entries[l->n_entries];
 
                 memset(&cache, 0, sizeof(cache));
@@ -1463,7 +1464,7 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
         cursor.kind != CXCursor_UnexposedExpr) {
         unsigned s = get_token_offset(tokens[0]);
         StructArrayItem *sai;
-        StructArrayList *parent = rec.parent->data.l;
+        StructArrayList *parent = &struct_array_lists[rec.parent->data.sal_idx];
 
         if (parent != NULL) {
             if (parent->n_entries == parent->n_allocated_entries) {
