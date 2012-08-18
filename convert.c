@@ -1788,7 +1788,8 @@ static void replace_struct_array(unsigned *_saidx, unsigned *_clidx,
                 } else {
                     print_literal_text("0", lnum, cpos);
                 }
-            } else if (structs[idx].entries[j].struct_decl_idx != (unsigned) -1) {
+            } else if (structs[idx].entries[j].struct_decl_idx != (unsigned) -1 ||
+                       structs[idx].entries[j].array_depth) {
                 print_literal_text("{}", lnum, cpos);
             } else {
                 print_literal_text("0", lnum, cpos);
