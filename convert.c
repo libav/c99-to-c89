@@ -1230,10 +1230,9 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
                 l->struct_decl_idx = idx;
                 l->array_depth = depth;
 
-                // FIXME if needed, if the parent is an InitListExpr also,
-                // here we could increment the parent l->n_entries to keep
-                // track of the number (and in case of struct: type) of each
-                // of the children nodes.
+                // If the parent is an InitListExpr also, we increment the
+                // parent l->n_entries to keep track of the number (and thus
+                // in case of a struct: the type) of each child node.
                 //
                 // E.g. { var, { var2, var3 }, var4 }
                 //      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ <- parent
