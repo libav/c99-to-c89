@@ -1087,6 +1087,8 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
     case CXCursor_TypedefDecl: {
         TypedefDeclaration decl;
         memset(&decl, 0, sizeof(decl));
+        decl.struct_decl_idx = (unsigned) -1;
+        decl.enum_decl_idx = (unsigned) -1;
         rec.data.td_decl = &decl;
         clang_visitChildren(cursor, callback, &rec);
         register_typedef(clang_getCString(str), tokens, n_tokens,
