@@ -1206,6 +1206,16 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
                       parent.kind == CXCursor_TypedefDecl ?
                             rec.parent->data.td_decl : NULL);
         break;
+    case CXCursor_TypeRef: {
+        if (parent.kind == CXCursor_VarDecl &&
+            rec.parent->data.var_decl_data.struct_decl_idx == (unsigned) -1) {
+            char *str = concat_name(tokens, 0, n_tokens - 2);
+            unsigned idx = find_struct_decl_idx_for_type_name(str);
+            free(str);
+            rec.parent->data.var_decl_data.struct_decl_idx = idx;
+        }
+        break;
+    }
     case CXCursor_VarDecl: {
         // e.g. static const struct <type> name { val }
         //      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
