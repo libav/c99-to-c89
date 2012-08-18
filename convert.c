@@ -580,8 +580,8 @@ static void register_enum(const char *str, CXCursor cursor,
     EnumDeclaration *decl;
 
     for (n = 0; n < n_enums; n++) {
-        if (!strcmp(enums[n].name, str) &&
-            memcmp(&cursor, &enums[n].cursor, sizeof(cursor))) {
+        if ((str[0] != 0 && !strcmp(enums[n].name, str)) ||
+            !memcmp(&cursor, &enums[n].cursor, sizeof(cursor))) {
             /* already exists */
             if (decl_ptr)
                 decl_ptr->enum_decl_idx = n;
