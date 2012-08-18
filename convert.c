@@ -1777,8 +1777,17 @@ static void replace_struct_array(unsigned *_saidx, unsigned *_clidx,
         assert(struct_array_lists[saidx].array_depth > 0 ||
                j < structs[struct_array_lists[saidx].struct_decl_idx].n_entries);
         if (val_idx == (unsigned) -1) {
-            if (struct_array_lists[saidx].array_depth ||
-                structs[struct_array_lists[saidx].struct_decl_idx].entries[j].array_depth) {
+            unsigned depth = struct_array_lists[saidx].array_depth;
+            unsigned idx = struct_array_lists[saidx].struct_decl_idx;
+            if (depth > 1) {
+                print_literal_text("{}", lnum, cpos);
+            } else if (depth == 1) {
+                if (idx != (unsigned) -1) {
+                    print_literal_text("{}", lnum, cpos);
+                } else {
+                    print_literal_text("0", lnum, cpos);
+                }
+            } else if (structs[idx].entries[j].struct_decl_idx != (unsigned) -1) {
                 print_literal_text("{}", lnum, cpos);
             } else {
                 print_literal_text("0", lnum, cpos);
