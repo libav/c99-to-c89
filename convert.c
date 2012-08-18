@@ -961,14 +961,16 @@ static CursorRecursion *find_var_decl_context(CursorRecursion *rec)
         case CXCursor_ReturnStmt:
         case CXCursor_CompoundStmt:
         case CXCursor_IfStmt:
+        case CXCursor_SwitchStmt:
             return p;
         case CXCursor_CallExpr:
         case CXCursor_CompoundAssignOperator:
         case CXCursor_BinaryOperator:
-            // FIXME: switch/case/default, do, while, for
+            // FIXME: do/while/for
             if ((p->parent->kind == CXCursor_IfStmt && p->parent->child_cntr > 1) ||
                 (p->parent->kind == CXCursor_CaseStmt && p->parent->child_cntr > 1) ||
-                p->parent->kind == CXCursor_CompoundStmt) {
+                p->parent->kind == CXCursor_CompoundStmt ||
+                p->parent->kind == CXCursor_DefaultStmt) {
                 return p;
             }
             break;

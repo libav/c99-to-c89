@@ -71,9 +71,12 @@ int main(int argc, char *argv[])
     int var;
 
 #define X 3
-    switch (argc) {
+    switch (call_function((AVRational){1, 1})) {
     case 0:
         call_function((AVRational){2, 2});
+        break;
+    default:
+        call_function((AVRational){3, 3});
         break;
     }
     var = ((const int[2]){1,2})[argc];
