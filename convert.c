@@ -526,6 +526,18 @@ static enum CXChildVisitResult fill_enum_value(CXCursor cursor,
         clang_disposeString(tsp);
         break;
     }
+    case CXCursor_CharacterLiteral: {
+        CXString spelling;
+        const char *str;
+
+        assert(n_tokens == 2);
+        spelling = clang_getTokenSpelling(TU, tokens[0]);
+        str = clang_getCString(spelling);
+        assert(strlen(str) == 3 && str[0] == '\'' && str[2] == '\'');
+        cache->n[++cache->n[0]] = str[1];
+        clang_disposeString(spelling);
+        break;
+    }
     case CXCursor_ParenExpr:
         clang_visitChildren(cursor, fill_enum_value, client_data);
         break;
