@@ -487,13 +487,14 @@ static enum CXChildVisitResult fill_enum_value(CXCursor cursor,
         int cache[3] = { 0 };
         CXString tsp;
 
-        assert(n_tokens == 4);
+        assert(n_tokens >= 4);
+        // FIXME which token is the arithmetic operator?
         tsp = clang_getTokenSpelling(TU, tokens[1]);
         clang_visitChildren(cursor, fill_enum_value, cache);
         assert(cache[0] == 2);
-        ptr[1 + ptr[0]++] = arithmetic_expression(cache[1],
-                                                  clang_getCString(tsp),
-                                                  cache[2]);
+        ptr[++ptr[0]] = arithmetic_expression(cache[1],
+                                              clang_getCString(tsp),
+                                              cache[2]);
         clang_disposeString(tsp);
         break;
     }
@@ -502,7 +503,7 @@ static enum CXChildVisitResult fill_enum_value(CXCursor cursor,
 
         assert(n_tokens == 2);
         tsp = clang_getTokenSpelling(TU, tokens[0]);
-        ptr[1 + ptr[0]++] = atoi(clang_getCString(tsp));
+        ptr[++ptr[0]] = atoi(clang_getCString(tsp));
         clang_disposeString(tsp);
         break;
     }
@@ -511,10 +512,13 @@ static enum CXChildVisitResult fill_enum_value(CXCursor cursor,
 
         assert(n_tokens == 2);
         tsp = clang_getTokenSpelling(TU, tokens[0]);
-        ptr[1 + ptr[0]++] = find_enum_value(clang_getCString(tsp));
+        ptr[++ptr[0]] = find_enum_value(clang_getCString(tsp));
         clang_disposeString(tsp);
         break;
     }
+    case CXCursor_ParenExpr:
+        clang_visitChildren(cursor, fill_enum_value, client_data);
+        break;
     default:
         break;
     }
