@@ -1407,7 +1407,7 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
             sai->value_offset.end   = get_token_offset(tokens[n_tokens - 2]);
             rec.data.sal_idx = rec.parent->data.sal_idx;
             clang_visitChildren(cursor, callback, &rec);
-            l->n_entries++;
+            struct_array_lists[rec.parent->data.sal_idx].n_entries++;
             clang_disposeString(spelling);
         } else {
             clang_visitChildren(cursor, callback, &rec);
@@ -1807,7 +1807,8 @@ static void replace_struct_array(unsigned *_saidx, unsigned *_clidx,
         val_token_end = find_token_for_offset(tokens, n_tokens, *_n, val_off_e);
         saidx2 = find_index_for_level(struct_array_lists[saidx].level + 1,
                                       val_idx, saidx + 1);
-        if (struct_array_lists[saidx2].level < struct_array_lists[saidx].level)
+        if (saidx2 < n_struct_array_lists &&
+            struct_array_lists[saidx2].level < struct_array_lists[saidx].level)
             saidx2 = n_struct_array_lists;
 
         // adjust position
