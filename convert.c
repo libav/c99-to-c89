@@ -1399,8 +1399,16 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
             if (!strcmp(istr, ".")) {
                 sai->value_offset.start = get_token_offset(tokens[3]);
             } else if (!strcmp(istr, "[")) {
-                // FIXME this can be wrong
-                sai->value_offset.start = get_token_offset(tokens[4]);
+                unsigned n;
+                for (n = 2; n < n_tokens - 2; n++) {
+                    CXString spelling = clang_getTokenSpelling(TU, tokens[n]);
+                    int res = strcmp(clang_getCString(spelling), "]");
+                    clang_disposeString(spelling);
+                    if (!res)
+                        break;
+                }
+                assert(n < n_tokens - 2);
+                sai->value_offset.start = get_token_offset(tokens[n + 2]);
             } else {
                 sai->value_offset.start = get_token_offset(tokens[0]);
             }
