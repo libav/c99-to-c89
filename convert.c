@@ -1062,9 +1062,11 @@ static void analyze_compound_literal_lineage(CompoundLiteralList *l,
             l->context.start = get_token_offset(p->tokens[1]);
         } else {
             l->context.start = get_token_offset(p->tokens[0]);
+            l->type = TYPE_CONST_DECL;
+            return;
         }
-        l->type = TYPE_CONST_DECL;
-    } else if (p->kind == CXCursor_VarDecl) {
+    }
+    if (p->kind == CXCursor_VarDecl) {
         l->type = TYPE_OMIT_CAST;
         l->context.start = l->cast_token.start;
     } else if ((p = find_var_decl_context(p))) {
