@@ -1045,7 +1045,7 @@ static CursorRecursion *find_var_decl_context(CursorRecursion *rec)
 static void analyze_compound_literal_lineage(CompoundLiteralList *l,
                                              CursorRecursion *rec)
 {
-    CursorRecursion *p = rec;
+    CursorRecursion *p = rec, *p2;
 
 #define DEBUG 0
     dprintf("CL lineage: ");
@@ -1056,15 +1056,11 @@ static void analyze_compound_literal_lineage(CompoundLiteralList *l,
 #define DEBUG 0
 
     p = rec->parent->parent;
-    if (is_const(l, rec)) {
-        p = find_function_or_top(rec);
-        if (p->parent->kind == CXCursor_FunctionDecl) {
-            l->context.start = get_token_offset(p->tokens[1]);
-        } else {
-            l->context.start = get_token_offset(p->tokens[0]);
-            l->type = TYPE_CONST_DECL;
-            return;
-        }
+    p2 = find_function_or_top(rec);
+    if (p2->parent->kind != CXCursor_FunctionDecl) {
+        l->context.start = get_token_offset(p2->tokens[0]);
+        l->type = TYPE_CONST_DECL;
+        return;
     }
     if (p->kind == CXCursor_VarDecl) {
         l->type = TYPE_OMIT_CAST;
