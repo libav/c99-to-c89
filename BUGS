@@ -1,4 +1,3 @@
-* AVCodecID enum starts at 0 for each codec type
 * /Users/ronaldbultje/Projects/libav/libavutil/pixdesc.c:1089: warning: excess elements in array initializer
   /Users/ronaldbultje/Projects/libav/libavutil/pixdesc.c:1089: warning: (near initialization for ‘av_pix_fmt_descriptors’)
   /Users/ronaldbultje/Projects/libav/libavutil/samplefmt.c:44: warning: excess elements in array initializer
