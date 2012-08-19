@@ -1,4 +1,4 @@
-all: converter
+all: converter compilewrap
 
 OBJS = convert.o
 
@@ -34,4 +34,7 @@ compilewrap: compilewrap.o
 	$(LD) -o $@ $< $(LDFLAGS)
 
 convert.o: convert.c
+	$(CC) $(CFLAGS) -o $@ -c $<
+
+compilewrap.o: compilewrap.c
 	$(CC) $(CFLAGS) -o $@ -c $<
