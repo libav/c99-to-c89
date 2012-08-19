@@ -1,0 +1,9 @@
+* AVCodecID enum starts at 0 for each codec type
+* /Users/ronaldbultje/Projects/libav/libavutil/pixdesc.c:1089: warning: excess elements in array initializer
+  /Users/ronaldbultje/Projects/libav/libavutil/pixdesc.c:1089: warning: (near initialization for ‘av_pix_fmt_descriptors’)
+  /Users/ronaldbultje/Projects/libav/libavutil/samplefmt.c:44: warning: excess elements in array initializer
+  /Users/ronaldbultje/Projects/libav/libavutil/samplefmt.c:44: warning: (near initialization for ‘sample_fmt_info’)
+  Same in other places also.
+* swscale_unscaled.c fails because we wrongly use const for non-static data. that should only be used for static data,
+  i.e. numbers, constants, strings, not variables. See if is_const() can handle that.
+* unions in matroskadec (defaults), cmdutils.h OptionDef, AVOptions and escape124 decoder's MacroBlock
