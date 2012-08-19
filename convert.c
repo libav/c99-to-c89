@@ -493,9 +493,20 @@ static enum CXChildVisitResult fill_enum_value(CXCursor cursor,
     }
 
     switch (cursor.kind) {
+    case CXCursor_UnaryOperator: {
+        CXString tsp = clang_getTokenSpelling(TU, tokens[0]);
+        const char *str = clang_getCString(tsp);
+        clang_visitChildren(cursor, fill_enum_value, client_data);
+        assert(str[1] == 0 && (str[0] == '+' || str[0] == '-'));
+        assert(cache->n[0] == 1);
+        if (str[0] == '-') {
+            cache->n[1] = -cache->n[1];
+        }
+        clang_disposeString(tsp);
+        break;
+    }
     case CXCursor_BinaryOperator: {
         FillEnumMemberCache cache2;
-        CXString tsp;
 
         memset(&cache2, 0, sizeof(cache2));
         assert(n_tokens >= 4);
