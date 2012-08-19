@@ -510,10 +510,14 @@ static enum CXChildVisitResult fill_enum_value(CXCursor cursor,
     }
     case CXCursor_IntegerLiteral: {
         CXString tsp;
+        const char *str;
+        char *end;
 
         assert(n_tokens == 2);
         tsp = clang_getTokenSpelling(TU, tokens[0]);
-        cache->n[++cache->n[0]] = atoi(clang_getCString(tsp));
+        str = clang_getCString(tsp);
+        cache->n[++cache->n[0]] = strtol(str, &end, 0);
+        assert(end - str == strlen(str));
         clang_disposeString(tsp);
         break;
     }
