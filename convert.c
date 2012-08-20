@@ -236,6 +236,7 @@ static void register_struct(const char *str, CXCursor cursor,
                             TypedefDeclaration *decl_ptr);
 static void register_enum(const char *str, CXCursor cursor,
                           TypedefDeclaration *decl_ptr);
+static unsigned find_struct_decl_idx_for_type_name(const char *name);
 
 static enum CXChildVisitResult find_anon_struct(CXCursor cursor,
                                                 CXCursor parent,
@@ -251,6 +252,11 @@ static enum CXChildVisitResult find_anon_struct(CXCursor cursor,
     case CXCursor_EnumDecl:
         register_enum(str, cursor, client_data);
         break;
+    case CXCursor_TypeRef: {
+        TypedefDeclaration *td = client_data;
+        td->struct_decl_idx = find_struct_decl_idx_for_type_name(str);
+        break;
+    }
     default:
         break;
     }
@@ -709,7 +715,6 @@ static unsigned find_struct_decl_idx_by_name(const char *name)
     return (unsigned) -1;
 }
 
-static unsigned find_struct_decl_idx_for_type_name(const char *name);
 static void resolve_proxy(TypedefDeclaration *decl)
 {
     if (decl->struct_decl_idx != (unsigned) -1 ||
@@ -1222,9 +1227,8 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
     case CXCursor_TypeRef: {
         if (parent.kind == CXCursor_VarDecl &&
             rec.parent->data.var_decl_data.struct_decl_idx == (unsigned) -1) {
-            char *str = concat_name(tokens, 0, n_tokens - 2);
-            unsigned idx = find_struct_decl_idx_for_type_name(str);
-            free(str);
+            const char *cstr = clang_getCString(str);
+            unsigned idx = find_struct_decl_idx_for_type_name(cstr);
             rec.parent->data.var_decl_data.struct_decl_idx = idx;
         }
         break;
@@ -1809,7 +1813,8 @@ static void replace_struct_array(unsigned *_saidx, unsigned *_clidx,
                 } else {
                     print_literal_text("0", lnum, cpos);
                 }
-            } else if (structs[idx].entries[j].struct_decl_idx != (unsigned) -1 ||
+            } else if ((structs[idx].entries[j].struct_decl_idx != (unsigned) -1 &&
+                        structs[idx].entries[j].n_ptrs == 0) ||
                        structs[idx].entries[j].array_depth) {
                 print_literal_text("{}", lnum, cpos);
             } else {
