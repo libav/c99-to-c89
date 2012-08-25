@@ -968,11 +968,12 @@ static unsigned find_encompassing_struct_decl(unsigned start, unsigned end,
                 if (l->array_depth > 0) {
                     *depth = l->array_depth - 1;
                     return l->struct_decl_idx;
-                } else {
-                    assert(s_idx != (unsigned) -1);
+                } else if (s_idx != (unsigned) -1) {
                     assert(m_idx < structs[s_idx].n_entries);
                     *depth = structs[s_idx].entries[m_idx].array_depth;
                     return structs[s_idx].entries[m_idx].struct_decl_idx;
+                } else {
+                    return (unsigned) -1;
                 }
             } else {
                 // Can this ever trigger?
