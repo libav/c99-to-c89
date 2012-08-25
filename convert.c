@@ -1147,9 +1147,14 @@ static unsigned get_n_tokens(CXToken *tokens, unsigned n_tokens)
      * function1(..) { .. } static void function2(..) { }", we want to
      * close context before the last token (which in the first case is
      * ";", but in the second case is "static"). */
-    CXString spelling = clang_getTokenSpelling(TU, tokens[n_tokens - 1]);
-    int res = strcmp(clang_getCString(spelling), ";");
-    clang_disposeString(spelling);
+    int res;
+    if (n_tokens > 0) {
+        CXString spelling = clang_getTokenSpelling(TU, tokens[n_tokens - 1]);
+        res = strcmp(clang_getCString(spelling), ";");
+        clang_disposeString(spelling);
+    } else {
+        res = 1;
+    }
 
     return n_tokens - !!res;
 }
