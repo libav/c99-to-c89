@@ -136,7 +136,8 @@ int main(int argc, char* argv[])
         } else if (!strcmp(argv[i], "-MMD")) {
             // Preprocessor-only parameter
             cpp_argv[cpp_argc++] = argv[i++];
-        } else if (!strcmp(argv[i], "-MF") || !strcmp(argv[i], "-MT")) {
+        } else if (!strcmp(argv[i], "-MF") || !strcmp(argv[i], "-MT") ||
+                   !strncmp(argv[i], "-FI", 3)) {
             // Deps generation, pass to cpp only
             cpp_argv[cpp_argc++] = argv[i++];
             if (i < argc)
