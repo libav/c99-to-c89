@@ -99,7 +99,7 @@ int main(int argc, char* argv[])
                 i += 2;
             } else if (!strncmp(argv[i], "-Fo", 3)) {
                 cc_argv[cc_argc++] = argv[i];
-                outname = argv[i] + 2;
+                outname = argv[i] + 3;
                 i++;
             } else {
                 /* -o */
