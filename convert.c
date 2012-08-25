@@ -1894,9 +1894,15 @@ static void print_token_wrapper(CXToken *tokens, unsigned n_tokens,
                                 unsigned *saidx, unsigned *clidx,
                                 unsigned off)
 {
+    *saidx = 0;
     while (*saidx < n_struct_array_lists &&
            struct_array_lists[*saidx].value_offset.start < off)
         (*saidx)++;
+    *clidx = 0;
+    while (*clidx < n_comp_literal_lists &&
+           (comp_literal_lists[*clidx].type == TYPE_UNKNOWN ||
+            comp_literal_lists[*clidx].context.start < off))
+        (*clidx)++;
 
     if (*saidx < n_struct_array_lists &&
         off == struct_array_lists[*saidx].value_offset.start) {
@@ -1930,9 +1936,6 @@ static void print_tokens(CXToken *tokens, unsigned n_tokens)
     unsigned cpos = 0, lnum = 0, n, saidx = 0, clidx = 0, off;
 
     reorder_compound_literal_list(0);
-    while (clidx < n_comp_literal_lists &&
-           comp_literal_lists[clidx].type == TYPE_UNKNOWN)
-        clidx++;
 
     for (n = 0; n < n_tokens; n++) {
         indent_for_token(tokens[n], &lnum, &cpos, &off);
