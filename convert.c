@@ -184,7 +184,7 @@ static unsigned find_token_index(CXToken *tokens, unsigned n_tokens,
 {
     unsigned n;
 
-    for (n = 0; n < n_tokens; n++) {
+    for (n = n_tokens - 1; n != (unsigned) -1; n--) {
         CXString tstr = clang_getTokenSpelling(TU, tokens[n]);
         const char *cstr = clang_getCString(tstr);
         int res = strcmp(str, cstr);
