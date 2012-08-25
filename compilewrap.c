@@ -64,6 +64,7 @@ int main(int argc, char* argv[])
     char *cmdline;
     char temp_file_1[200], temp_file_2[200], arg_buffer[200], fo_buffer[200];
     const char *outname = NULL;
+    char *ptr;
 
     if (!strncmp(argv[1], "cl", 2))
         msvc = 1;
@@ -166,8 +167,15 @@ int main(int argc, char* argv[])
         goto exit;
     }
     free(cmdline);
-    cmdline = malloc(strlen(temp_file_1) + strlen(temp_file_2) + strlen(CONVERTER) + 20);
-    sprintf(cmdline, "%s %s %s", CONVERTER, temp_file_1, temp_file_2);
+    cmdline = malloc(strlen(argv[0]) + strlen(temp_file_1) + strlen(temp_file_2) + strlen(CONVERTER) + 20);
+    strcpy(cmdline, argv[0]);
+    ptr = strrchr(argv[0], '\\');
+    if (!ptr) {
+        ptr = cmdline;
+    } else {
+        ptr = cmdline + (ptr + 1 - argv[0]);
+    }
+    sprintf(ptr, "%s %s %s", CONVERTER, temp_file_1, temp_file_2);
     exit_code = system(cmdline);
     if (exit_code) {
         unlink(temp_file_1);
