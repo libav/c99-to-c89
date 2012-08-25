@@ -1814,17 +1814,17 @@ static void replace_struct_array(unsigned *_saidx, unsigned *_clidx,
             unsigned depth = struct_array_lists[saidx].array_depth;
             unsigned idx = struct_array_lists[saidx].struct_decl_idx;
             if (depth > 1) {
-                print_literal_text("{}", lnum, cpos);
+                print_literal_text("{ 0 }", lnum, cpos);
             } else if (depth == 1) {
                 if (idx != (unsigned) -1) {
-                    print_literal_text("{}", lnum, cpos);
+                    print_literal_text("{ 0 }", lnum, cpos);
                 } else {
                     print_literal_text("0", lnum, cpos);
                 }
             } else if ((structs[idx].entries[j].struct_decl_idx != (unsigned) -1 &&
                         structs[idx].entries[j].n_ptrs == 0) ||
                        structs[idx].entries[j].array_depth) {
-                print_literal_text("{}", lnum, cpos);
+                print_literal_text("{ 0 }", lnum, cpos);
             } else {
                 print_literal_text("0", lnum, cpos);
             }
