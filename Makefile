@@ -1,4 +1,6 @@
-all: converter compilewrap
+EXT =
+
+all: converter$(EXT) compilewrap$(EXT)
 
 OBJS = convert.o
 
@@ -9,29 +11,29 @@ LDFLAGS=-L/opt/local/libexec/llvm-3.2/lib -g
 LIBS=-lclang
 
 clean:
-	rm -f converter $(OBJS)
+	rm -f converter$(EXT) $(OBJS)
 	rm -f unit.c.c unit2.c.c
 
-test1: converter
+test1: converter$(EXT)
 	$(CC) -E unit.c -o unit.prev.c
 	./converter unit.prev.c unit.post.c
 	diff -u unit.{prev,post}.c
 
-test2: converter
+test2: converter$(EXT)
 	$(CC) -E unit2.c -o unit2.prev.c
 	./converter unit2.prev.c unit2.post.c
 	diff -u unit2.{prev,post}.c
 
-test3: converter
+test3: converter$(EXT)
 	$(CC) $(CFLAGS) -E -o convert.prev.c convert.c
 	./converter convert.prev.c convert.post.c
 	diff -u convert.{prev,post}.c
 
-converter: $(OBJS)
-	$(LD) -o $@ $< $(LDFLAGS) $(LIBS)
+converter$(EXT): $(OBJS)
+	$(CC) -o $@ $< $(LDFLAGS) $(LIBS)
 
-compilewrap: compilewrap.o
-	$(LD) -o $@ $< $(LDFLAGS)
+compilewrap$(EXT): compilewrap.o
+	$(CC) -o $@ $< $(LDFLAGS)
 
 convert.o: convert.c
 	$(CC) $(CFLAGS) -o $@ -c $<
