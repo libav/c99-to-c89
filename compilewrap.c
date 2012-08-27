@@ -66,7 +66,7 @@ int main(int argc, char* argv[])
     const char *outname = NULL;
     char *ptr;
 
-    if (!strncmp(argv[1], "cl", 2))
+    if (argc > 1 && !strncmp(argv[1], "cl", 2))
         msvc = 1;
 
     sprintf(temp_file_1, "preprocessed_%d.c", getpid());
