@@ -55,8 +55,8 @@ static char* create_cmdline(char **argv)
 
 int main(int argc, char* argv[])
 {
-    int i, cpp_argc, cc_argc;
-    char **cpp_argv, **cc_argv;
+    int i, cpp_argc, cc_argc, pass_argc;
+    char **cpp_argv, **cc_argv, **pass_argv;
     int exit_code;
     int input_source = 0, input_obj = 0, flag_compile = 0;
     int msvc = 0;
@@ -74,7 +74,8 @@ int main(int argc, char* argv[])
 
     cpp_argv = malloc((argc + 2) * sizeof(*cpp_argv));
     cc_argv = malloc((argc + 3) * sizeof(*cc_argv));
-    cpp_argc = cc_argc = 0;
+    pass_argv = malloc((argc + 3) * sizeof(*pass_argv));
+    cpp_argc = cc_argc = pass_argc = 0;
     for (i = 1; i < argc; ) {
         int len = strlen(argv[i]);
         int ext_inputfile = 0;
@@ -89,24 +90,31 @@ int main(int argc, char* argv[])
                 input_obj = 1;
             }
         }
-        if (!strncmp(argv[i], "-Fo", 3) || !strcmp(argv[i], "-o")) {
+        if (!strncmp(argv[i], "-Fo", 3) || !strcmp(argv[i], "-out") || !strcmp(argv[i], "-o")) {
             // Copy the output filename only to cc
-            if (!strcmp(argv[i], "-Fo") && i + 1 < argc) {
-                /* Support the nonstandard syntax -Fo filename, to get around
+            if ((!strcmp(argv[i], "-Fo") || !strcmp(argv[i], "-out")) && i + 1 < argc) {
+                /* Support the nonstandard syntax -Fo filename or -out filename, to get around
                  * msys file name mangling issues. */
-                sprintf(fo_buffer, "-Fo%s", argv[i + 1]);
+                if (!strcmp(argv[i], "-out"))
+                    sprintf(fo_buffer, "-out:%s", argv[i + 1]);
+                else
+                    sprintf(fo_buffer, "%s%s", argv[i], argv[i + 1]);
                 outname = argv[i + 1];
                 cc_argv[cc_argc++] = fo_buffer;
+                pass_argv[pass_argc++] = fo_buffer;
                 i += 2;
             } else if (!strncmp(argv[i], "-Fo", 3)) {
                 cc_argv[cc_argc++] = argv[i];
+                pass_argv[pass_argc++] = argv[i];
                 outname = argv[i] + 3;
                 i++;
             } else {
                 /* -o */
                 cc_argv[cc_argc++] = argv[i++];
+                pass_argv[pass_argc++] = argv[i];
                 if (i < argc) {
                     outname = argv[i];
+                    pass_argv[pass_argc++] = argv[i];
                     cc_argv[cc_argc++] = argv[i++];
                 }
             }
@@ -124,6 +132,7 @@ int main(int argc, char* argv[])
             }
         } else if (!strcmp(argv[i], "-c")) {
             // Copy the compile flag only to cc, set the preprocess flag for cpp
+            pass_argv[pass_argc++] = argv[i];
             cc_argv[cc_argc++] = argv[i++];
             if (msvc)
                 cpp_argv[cpp_argc++] = "/P";
@@ -132,36 +141,45 @@ int main(int argc, char* argv[])
             flag_compile = 1;
         } else if (ext_inputfile) {
             // Input filename, pass to cpp only, set the temp file input to cc
+            pass_argv[pass_argc++] = argv[i];
             cpp_argv[cpp_argc++] = argv[i++];
             cc_argv[cc_argc++] = temp_file_2;
         } else if (!strcmp(argv[i], "-MMD")) {
             // Preprocessor-only parameter
+            pass_argv[pass_argc++] = argv[i];
             cpp_argv[cpp_argc++] = argv[i++];
         } else if (!strcmp(argv[i], "-MF") || !strcmp(argv[i], "-MT")) {
             // Deps generation, pass to cpp only
+            pass_argv[pass_argc++] = argv[i];
             cpp_argv[cpp_argc++] = argv[i++];
-            if (i < argc)
+            if (i < argc) {
+                pass_argv[pass_argc++] = argv[i];
                 cpp_argv[cpp_argc++] = argv[i++];
+            }
         } else if (!strncmp(argv[i], "-FI", 3)) {
             // Forced include, pass to cpp only
+            pass_argv[pass_argc++] = argv[i];
             cpp_argv[cpp_argc++] = argv[i++];
         } else {
             // Normal parameter, copy to both cc and cpp
+            pass_argv[pass_argc++] = argv[i];
             cc_argv[cc_argc++]   = argv[i];
             cpp_argv[cpp_argc++] = argv[i];
             i++;
         }
     }
 
+    cpp_argv[cpp_argc++] = NULL;
+    cc_argv[cc_argc++] = NULL;
+    pass_argv[pass_argc++] = NULL;
+
     if (!flag_compile || !source_file || !outname) {
         /* Doesn't seem like we should be invoked, just call the parameters as such */
-        cmdline = create_cmdline(&argv[1]);
+        cmdline = create_cmdline(pass_argv);
         exit_code = system(cmdline);
         goto exit;
     }
 
-    cpp_argv[cpp_argc++] = NULL;
-    cc_argv[cc_argc++] = NULL;
     cmdline = create_cmdline(cpp_argv);
     exit_code = system(cmdline);
     if (exit_code) {
@@ -193,5 +211,6 @@ exit:
     free(cmdline);
     free(cc_argv);
     free(cpp_argv);
+    free(pass_argv);
     return exit_code ? 1 : 0;
 }
