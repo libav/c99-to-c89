@@ -11,7 +11,7 @@ LDFLAGS=-L/opt/local/libexec/llvm-3.2/lib -g
 LIBS=-lclang
 
 clean:
-	rm -f converter$(EXT) $(OBJS)
+	rm -f converter$(EXT) compilewrap$(EXT) $(OBJS) compilewrap.o
 	rm -f unit.c.c unit2.c.c
 
 test1: converter$(EXT)
