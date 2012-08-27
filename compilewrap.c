@@ -137,12 +137,14 @@ int main(int argc, char* argv[])
         } else if (!strcmp(argv[i], "-MMD")) {
             // Preprocessor-only parameter
             cpp_argv[cpp_argc++] = argv[i++];
-        } else if (!strcmp(argv[i], "-MF") || !strcmp(argv[i], "-MT") ||
-                   !strncmp(argv[i], "-FI", 3)) {
+        } else if (!strcmp(argv[i], "-MF") || !strcmp(argv[i], "-MT")) {
             // Deps generation, pass to cpp only
             cpp_argv[cpp_argc++] = argv[i++];
             if (i < argc)
                 cpp_argv[cpp_argc++] = argv[i++];
+        } else if (!strncmp(argv[i], "-FI", 3)) {
+            // Forced include, pass to cpp only
+            cpp_argv[cpp_argc++] = argv[i++];
         } else {
             // Normal parameter, copy to both cc and cpp
             cc_argv[cc_argc++]   = argv[i];
