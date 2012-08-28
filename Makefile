@@ -35,8 +35,5 @@ converter$(EXT): $(OBJS)
 compilewrap$(EXT): compilewrap.o
 	$(CC) -o $@ $< $(LDFLAGS)
 
-convert.o: convert.c
-	$(CC) $(CFLAGS) -o $@ -c $<
-
-compilewrap.o: compilewrap.c
+%.o: %.c
 	$(CC) $(CFLAGS) -o $@ -c $<
