@@ -110,8 +110,8 @@ int main(int argc, char* argv[])
                 i++;
             } else {
                 /* -o */
-                cc_argv[cc_argc++] = argv[i++];
                 pass_argv[pass_argc++] = argv[i];
+                cc_argv[cc_argc++] = argv[i++];
                 if (i < argc) {
                     outname = argv[i];
                     pass_argv[pass_argc++] = argv[i];
