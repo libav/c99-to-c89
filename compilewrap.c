@@ -190,6 +190,8 @@ int main(int argc, char* argv[])
     cmdline = malloc(strlen(argv[0]) + strlen(temp_file_1) + strlen(temp_file_2) + strlen(CONVERTER) + 20);
     strcpy(cmdline, argv[0]);
     ptr = strrchr(argv[0], '\\');
+    if (!ptr)
+        ptr = strrchr(argv[0], '/');
     if (!ptr) {
         ptr = cmdline;
     } else {
