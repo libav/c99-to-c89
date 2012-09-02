@@ -144,7 +144,7 @@ int main(int argc, char* argv[])
             pass_argv[pass_argc++] = argv[i];
             cpp_argv[cpp_argc++] = argv[i++];
             cc_argv[cc_argc++] = temp_file_2;
-        } else if (!strcmp(argv[i], "-MMD")) {
+        } else if (!strcmp(argv[i], "-MMD") || !strncmp(argv[i], "-D", 2)) {
             // Preprocessor-only parameter
             pass_argv[pass_argc++] = argv[i];
             cpp_argv[cpp_argc++] = argv[i++];
