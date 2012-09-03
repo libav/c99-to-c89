@@ -167,10 +167,20 @@ typedef struct {
     struct {
         unsigned start, end;
     } value_offset;
+    int convert_to_assignment;
+    char *name;
 } StructArrayList;
 static StructArrayList *struct_array_lists = NULL;
 static unsigned n_struct_array_lists = 0;
 static unsigned n_allocated_struct_array_lists = 0;
+
+typedef struct {
+    int end;
+    int n_scopes;
+} EndScope;
+static EndScope *end_scopes = NULL;
+static unsigned n_end_scopes = 0;
+static unsigned n_allocated_end_scopes = 0;
 
 static FILE *out;
 
@@ -912,6 +922,7 @@ struct CursorRecursion {
         unsigned cl_idx;             // CompoundLiteralExpr
     } data;
     int is_function;
+    int end_scopes;
 };
 
 static unsigned find_encompassing_struct_decl(unsigned start, unsigned end,
@@ -1346,6 +1357,8 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
             l->type = TYPE_IRRELEVANT;
             l->n_entries = l->n_allocated_entries = 0;
             l->entries = NULL;
+            l->name = NULL;
+            l->convert_to_assignment = 0;
             l->value_offset.start = get_token_offset(tokens[0]);
             l->value_offset.end   = get_token_offset(tokens[n_tokens - 2]);
             if (rec.parent->kind == CXCursor_VarDecl) {
@@ -1410,6 +1423,28 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
                 parent_idx != (unsigned) -1) {
                 struct_array_lists[parent_idx].n_entries++;
             }
+            l = &struct_array_lists[rec.data.sal_idx];
+            if (l->convert_to_assignment &&
+                rec.parent->kind == CXCursor_VarDecl) {
+                // Assumes "union foo bar", fix to handle typedeffed unions as well
+                //                    ^^^
+                CXString name = clang_getTokenSpelling(TU,
+                                                       rec.parent->tokens[2]);
+                l->value_offset.start -= 2; // Swallow the assignment character
+                l->value_offset.end   += 1; // Swallow the final semicolon
+                free(l->name);
+                l->name = strdup(clang_getCString(name));
+                clang_disposeString(name);
+                rec_ptr = (CursorRecursion *) client_data;
+                while (rec_ptr->kind != CXCursor_CompoundStmt)
+                    rec_ptr = rec_ptr->parent;
+                if (rec_ptr->kind != CXCursor_CompoundStmt) {
+                    fprintf(stderr, "Unable to find enclosing compound statement\n");
+                    exit(1);
+                }
+                rec_ptr->end_scopes++;
+            } else
+                l->convert_to_assignment = 0;
         }
         break;
     case CXCursor_UnexposedExpr:
@@ -1487,6 +1522,28 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
             assert(l->struct_decl_idx != (unsigned) -1);
             sai->index = find_member_index_in_struct(&structs[l->struct_decl_idx],
                                                      member);
+            if (structs[l->struct_decl_idx].is_union && is_in_function)
+                l->convert_to_assignment = 1;
+        }
+        break;
+    case CXCursor_CompoundStmt:
+        clang_visitChildren(cursor, callback, &rec);
+        if (rec.end_scopes) {
+            EndScope *e;
+            if (n_end_scopes == n_allocated_end_scopes) {
+                unsigned num = n_allocated_end_scopes + 16;
+                void *mem = realloc(end_scopes,
+                                    sizeof(*end_scopes) * num);
+                if (!mem) {
+                    fprintf(stderr, "Failed to allocate memory for str/arr\n");
+                    exit(1);
+                }
+                end_scopes = (EndScope *) mem;
+                n_allocated_end_scopes = num;
+            }
+            e = &end_scopes[n_end_scopes++];
+            e->end = get_token_offset(tokens[n_tokens - 1]);
+            e->n_scopes = rec.end_scopes;
         }
         break;
     case CXCursor_IntegerLiteral:
@@ -1675,6 +1732,12 @@ static void indent_for_token(CXToken token, unsigned *lnum,
         fprintf(out, " ");
 }
 
+static void print_literal_text_noinc(const char *str, unsigned *lnum,
+                                     unsigned *pos)
+{
+    fprintf(out, "%s", str);
+}
+
 static void print_literal_text(const char *str, unsigned *lnum,
                                unsigned *pos)
 {
@@ -1765,11 +1828,11 @@ static void reorder_compound_literal_list(unsigned n)
 
 static void print_token_wrapper(CXToken *tokens, unsigned n_tokens,
                                 unsigned *n, unsigned *lnum, unsigned *cpos,
-                                unsigned *saidx, unsigned *clidx,
+                                unsigned *saidx, unsigned *clidx, unsigned *esidx,
                                 unsigned off);
 
 static void declare_variable(CompoundLiteralList *l, unsigned cur_tok_off,
-                             unsigned *clidx, unsigned *_saidx,
+                             unsigned *clidx, unsigned *_saidx, unsigned *esidx,
                              CXToken *tokens, unsigned n_tokens,
                              const char *var_name, unsigned *lnum,
                              unsigned *cpos)
@@ -1810,12 +1873,12 @@ static void declare_variable(CompoundLiteralList *l, unsigned cur_tok_off,
     for (n = idx1; n <= idx2; n++) {
         indent_for_token(tokens[n], lnum, cpos, &off);
         print_token_wrapper(tokens, n_tokens, &n, lnum, cpos,
-                            &saidx, clidx, off);
+                            &saidx, clidx, esidx, off);
     }
 }
 
 static void replace_comp_literal(CompoundLiteralList *l,
-                                 unsigned *clidx, unsigned *saidx,
+                                 unsigned *clidx, unsigned *saidx, unsigned *esidx,
                                  unsigned *lnum, unsigned *cpos, unsigned *_n,
                                  CXToken *tokens, unsigned n_tokens)
 {
@@ -1837,7 +1900,7 @@ static void replace_comp_literal(CompoundLiteralList *l,
             print_literal_text("{ ", lnum, cpos);
             snprintf(tmp, sizeof(tmp), "tmp__%u", unique_cntr++);
             l->data.t_c_d.tmp_var_name = strdup(tmp);
-            declare_variable(l, *_n, clidx, saidx,
+            declare_variable(l, *_n, clidx, saidx, esidx,
                              tokens, n_tokens, tmp, lnum, cpos);
             print_literal_text("; ", lnum, cpos);
 
@@ -1881,7 +1944,7 @@ static void replace_comp_literal(CompoundLiteralList *l,
             print_literal_text("static ", lnum, cpos);
             snprintf(tmp, sizeof(tmp), "tmp__%u", unique_cntr++);
             l->data.t_c_d.tmp_var_name = strdup(tmp);
-            declare_variable(l, *_n, clidx, saidx,
+            declare_variable(l, *_n, clidx, saidx, esidx,
                              tokens, n_tokens, tmp, lnum, cpos);
             print_literal_text(";", lnum, cpos);
 
@@ -1909,7 +1972,7 @@ static void replace_comp_literal(CompoundLiteralList *l,
     }
 }
 
-static void replace_struct_array(unsigned *_saidx, unsigned *_clidx,
+static void replace_struct_array(unsigned *_saidx, unsigned *_clidx, unsigned *esidx,
                                  unsigned *lnum, unsigned *cpos, unsigned *_n,
                                  CXToken *tokens, unsigned n_tokens)
 {
@@ -1918,6 +1981,31 @@ static void replace_struct_array(unsigned *_saidx, unsigned *_clidx,
     StructDeclaration *decl = sal->struct_decl_idx != (unsigned) -1 ?
                               &structs[sal->struct_decl_idx] : NULL;
     int is_union = decl ? decl->is_union : 0;
+
+    if (sal->convert_to_assignment) {
+        print_literal_text_noinc(";", lnum, cpos);
+        for (i = 0; i < sal->n_entries; i++) {
+            StructArrayItem *sai = &sal->entries[i];
+            unsigned token_start = find_token_for_offset(tokens, n_tokens, *_n, sai->value_offset.start);
+            unsigned token_end   = find_token_for_offset(tokens, n_tokens, *_n, sai->value_offset.end);
+            unsigned saidx2 = 0;
+
+            print_literal_text_noinc(sal->name, lnum, cpos);
+            print_literal_text_noinc(".", lnum, cpos);
+            print_literal_text_noinc(structs[sal->struct_decl_idx].entries[sai->index].name, lnum, cpos);
+            print_literal_text_noinc("=", lnum, cpos);
+            get_token_position(tokens[token_start], lnum, cpos, &off);
+            for (n = token_start; n <= token_end; n++)
+                print_token_wrapper(tokens, n_tokens, &n, lnum, cpos,
+                                    &saidx2, _clidx, esidx, off);
+            print_literal_text_noinc(";", lnum, cpos);
+        }
+        n = find_token_for_offset(tokens, n_tokens, *_n,
+                                  struct_array_lists[saidx].value_offset.end);
+        *_n = n;
+        print_literal_text_noinc("{", lnum, cpos);
+        return;
+    }
 
     // we assume here the indenting for the first opening token,
     // i.e. the '{', is already taken care of
@@ -2018,7 +2106,7 @@ static void replace_struct_array(unsigned *_saidx, unsigned *_clidx,
         // print values out of order
         for (n = val_token_start; n <= val_token_end && print_normal; n++) {
             print_token_wrapper(tokens, n_tokens, &n, lnum, cpos,
-                                &saidx2, _clidx, off);
+                                &saidx2, _clidx, esidx, off);
             if (n != val_token_end)
                 indent_for_token(tokens[n + 1], lnum, cpos, &off);
         }
@@ -2061,7 +2149,7 @@ static void replace_struct_array(unsigned *_saidx, unsigned *_clidx,
 
 static void print_token_wrapper(CXToken *tokens, unsigned n_tokens,
                                 unsigned *n, unsigned *lnum, unsigned *cpos,
-                                unsigned *saidx, unsigned *clidx,
+                                unsigned *saidx, unsigned *clidx, unsigned *esidx,
                                 unsigned off)
 {
     *saidx = 0;
@@ -2073,6 +2161,13 @@ static void print_token_wrapper(CXToken *tokens, unsigned n_tokens,
            (comp_literal_lists[*clidx].type == TYPE_UNKNOWN ||
             comp_literal_lists[*clidx].context.start < off))
         (*clidx)++;
+    while (*esidx < n_end_scopes && off >= end_scopes[*esidx].end) {
+        unsigned i;
+        for (i = 0; i < end_scopes[*esidx].n_scopes; i++)
+            print_literal_text_noinc("}", lnum, cpos);
+        (*esidx)++;
+        print_literal_text_noinc("\n", lnum, cpos);
+    }
 
     if (*saidx < n_struct_array_lists &&
         off == struct_array_lists[*saidx].value_offset.start) {
@@ -2081,7 +2176,7 @@ static void print_token_wrapper(CXToken *tokens, unsigned n_tokens,
             (*saidx)++;
             print_token(tokens[*n], lnum, cpos);
         } else {
-            replace_struct_array(saidx, clidx, lnum, cpos, n,
+            replace_struct_array(saidx, clidx, esidx, lnum, cpos, n,
                                  tokens, n_tokens);
         }
     } else if (*clidx < n_comp_literal_lists &&
@@ -2090,7 +2185,7 @@ static void print_token_wrapper(CXToken *tokens, unsigned n_tokens,
             print_token(tokens[*n], lnum, cpos);
         } else {
             replace_comp_literal(&comp_literal_lists[*clidx],
-                                 clidx, saidx, lnum, cpos, n,
+                                 clidx, saidx, esidx, lnum, cpos, n,
                                  tokens, n_tokens);
         }
         while (*clidx < n_comp_literal_lists &&
@@ -2103,14 +2198,14 @@ static void print_token_wrapper(CXToken *tokens, unsigned n_tokens,
 
 static void print_tokens(CXToken *tokens, unsigned n_tokens)
 {
-    unsigned cpos = 0, lnum = 0, n, saidx = 0, clidx = 0, off;
+    unsigned cpos = 0, lnum = 0, n, saidx = 0, clidx = 0, esidx = 0, off;
 
     reorder_compound_literal_list(0);
 
     for (n = 0; n < n_tokens; n++) {
         indent_for_token(tokens[n], &lnum, &cpos, &off);
         print_token_wrapper(tokens, n_tokens, &n,
-                            &lnum, &cpos, &saidx, &clidx, off);
+                            &lnum, &cpos, &saidx, &clidx, &esidx, off);
     }
 
     // each file ends with a newline
@@ -2155,8 +2250,16 @@ static void cleanup(void)
                     struct_array_lists[n].entries[m].value_offset.end);
         }
         free(struct_array_lists[n].entries);
+        free(struct_array_lists[n].name);
     }
     free(struct_array_lists);
+
+    dprintf("N extra scope ends: %d\n", n_end_scopes);
+    for (n = 0; n < n_end_scopes; n++) {
+        dprintf("[%d]: end=%u n_scopes=%u\n",
+                n, end_scopes[n].end, end_scopes[n].n_scopes);
+    }
+    free(end_scopes);
 
     dprintf("N typedef entries: %d\n", n_typedefs);
     for (n = 0; n < n_typedefs; n++) {
