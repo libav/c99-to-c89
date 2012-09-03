@@ -106,6 +106,7 @@ typedef struct {
     unsigned n_allocated_entries;
     char *name;
     CXCursor cursor;
+    int is_union;
 } StructDeclaration;
 static StructDeclaration *structs = NULL;
 static unsigned n_structs = 0;
@@ -233,7 +234,7 @@ static char *concat_name(CXToken *tokens, unsigned int from, unsigned to)
 }
 
 static void register_struct(const char *str, CXCursor cursor,
-                            TypedefDeclaration *decl_ptr);
+                            TypedefDeclaration *decl_ptr, int is_union);
 static void register_enum(const char *str, CXCursor cursor,
                           TypedefDeclaration *decl_ptr);
 static unsigned find_struct_decl_idx_for_type_name(const char *name);
@@ -247,7 +248,10 @@ static enum CXChildVisitResult find_anon_struct(CXCursor cursor,
 
     switch (cursor.kind) {
     case CXCursor_StructDecl:
-        register_struct(str, cursor, client_data);
+        register_struct(str, cursor, client_data, 0);
+        break;
+    case CXCursor_UnionDecl:
+        register_struct(str, cursor, client_data, 1);
         break;
     case CXCursor_EnumDecl:
         register_enum(str, cursor, client_data);
@@ -363,7 +367,10 @@ static enum CXChildVisitResult fill_struct_members(CXCursor cursor,
         break;
     }
     case CXCursor_StructDecl:
-        register_struct(str, cursor, NULL);
+        register_struct(str, cursor, NULL, 0);
+        break;
+    case CXCursor_UnionDecl:
+        register_struct(str, cursor, NULL, 1);
         break;
     case CXCursor_EnumDecl:
         register_enum(str, cursor, NULL);
@@ -378,7 +385,7 @@ static enum CXChildVisitResult fill_struct_members(CXCursor cursor,
 }
 
 static void register_struct(const char *str, CXCursor cursor,
-                            TypedefDeclaration *decl_ptr)
+                            TypedefDeclaration *decl_ptr, int is_union)
 {
     unsigned n;
     StructDeclaration *decl;
@@ -418,6 +425,7 @@ static void register_struct(const char *str, CXCursor cursor,
     decl->n_entries = 0;
     decl->n_allocated_entries = 0;
     decl->entries = NULL;
+    decl->is_union = is_union;
 
     clang_visitChildren(cursor, fill_struct_members, (void *) (n_structs - 1));
 }
@@ -836,6 +844,8 @@ static unsigned find_struct_decl_idx_for_type_name(const char *name)
 
     if (!strncmp(name, "struct ", 7)) {
         return find_struct_decl_idx_by_name(name + 7);
+    } else if (!strncmp(name, "union ", 6)) {
+        return find_struct_decl_idx_by_name(name + 6);
     } else {
         TypedefDeclaration *decl = find_typedef_decl_by_name(name);
         return decl ? decl->struct_decl_idx : (unsigned) -1;
@@ -1172,6 +1182,7 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
     unsigned line, col, off, i;
     CXString filename;
     CursorRecursion rec;
+    int is_union;
 
     range = clang_getCursorExtent(cursor);
     pos   = clang_getCursorLocation(cursor);
@@ -1214,17 +1225,19 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
         break;
     }
     case CXCursor_StructDecl:
+    case CXCursor_UnionDecl:
+        is_union = cursor.kind == CXCursor_UnionDecl;
         if (parent.kind == CXCursor_TypedefDecl) {
             register_struct(clang_getCString(str), cursor,
-                            rec.parent->data.td_decl);
+                            rec.parent->data.td_decl, is_union);
         } else if (parent.kind == CXCursor_VarDecl) {
             TypedefDeclaration td;
             memset(&td, 0, sizeof(td));
             td.struct_decl_idx = (unsigned) -1;
-            register_struct(clang_getCString(str), cursor, &td);
+            register_struct(clang_getCString(str), cursor, &td, is_union);
             rec.parent->data.var_decl_data.struct_decl_idx = td.struct_decl_idx;
         } else {
-            register_struct(clang_getCString(str), cursor, NULL);
+            register_struct(clang_getCString(str), cursor, NULL, is_union);
         }
         break;
     case CXCursor_EnumDecl:
