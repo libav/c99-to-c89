@@ -911,6 +911,7 @@ struct CursorRecursion {
         TypedefDeclaration *td_decl; // TypedefDecl
         unsigned cl_idx;             // CompoundLiteralExpr
     } data;
+    int is_function;
 };
 
 static unsigned find_encompassing_struct_decl(unsigned start, unsigned end,
@@ -1182,8 +1183,8 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
     CXFile file;
     unsigned line, col, off, i;
     CXString filename;
-    CursorRecursion rec;
-    int is_union;
+    CursorRecursion rec, *rec_ptr;
+    int is_union, is_in_function = 0;
 
     range = clang_getCursorExtent(cursor);
     pos   = clang_getCursorLocation(cursor);
@@ -1198,6 +1199,17 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
     rec.parent->child_cntr++;
     rec.tokens = tokens;
     rec.n_tokens = get_n_tokens(tokens, n_tokens);
+    if (cursor.kind == CXCursor_FunctionDecl)
+        rec.is_function = 1;
+
+    rec_ptr = (CursorRecursion *) client_data;
+    while (rec_ptr) {
+        if (rec_ptr->is_function) {
+            is_in_function = 1;
+            break;
+        }
+        rec_ptr = rec_ptr->parent;
+    }
 
 #define DEBUG 0
     dprintf("DERP: %d [%d] %s @ %d:%d in %s\n", cursor.kind, parent.kind,
