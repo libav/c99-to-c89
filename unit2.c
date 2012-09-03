@@ -85,9 +85,10 @@ static const struct PixFmtInfo info2 = {
 
 typedef struct {
     const char *name;
-    struct {
+    union {
         void *dst_ptr;
         int (*func_arg)(void);
+        double dbl;
     } u;
 } OptionDef;
 
@@ -95,7 +96,19 @@ static int do_nothing(void) { }
 static const OptionDef options[] = {
   { "name", {(void*)0,},},
   { "name2", {.func_arg=do_nothing,},},
+  { "name3", {.dbl = (1.0/3 + 2/3)/2,},},
 };
+
+union av_intfloat32 {
+    int   i;
+    float f;
+};
+
+int foo(float f) {
+    union av_intfloat32 s = { .f = f };
+    int other;
+    return s.i;
+}
 
 int main(int argc, char *argv[])
 {
