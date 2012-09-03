@@ -21,6 +21,7 @@
 #include <clang-c/Index.h>
 #include <string.h>
 #include <stdlib.h>
+#include <inttypes.h>
 
 /*
  * The basic idea of the token parser is to "stack" ordered tokens
@@ -1542,6 +1543,103 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
     return CXChildVisit_Continue;
 }
 
+static double eval_expr(CXToken *tokens, unsigned *n, unsigned last);
+
+static double eval_prim(CXToken *tokens, unsigned *n, unsigned last) {
+    CXString s;
+    const char *str;
+    if (*n > last) {
+        fprintf(stderr, "Unable to parse an expression primary, no more tokens\n");
+        exit(1);
+    }
+    s = clang_getTokenSpelling(TU, tokens[*n]);
+    str = clang_getCString(s);
+    if (!strcmp(str, "-")) {
+        (*n)++;
+        clang_disposeString(s);
+        return -eval_prim(tokens, n, last);
+    } else if (!strcmp(str, "(")) {
+        double d;
+        (*n)++;
+        clang_disposeString(s);
+        d = eval_expr(tokens, n, last);
+        if (*n >= last) {
+            fprintf(stderr, "No right parenthesis found\n");
+            exit(1);
+        }
+        s = clang_getTokenSpelling(TU, tokens[*n]);
+        str = clang_getCString(s);
+        if (!strcmp(str, ")")) {
+            clang_disposeString(s);
+            (*n)++;
+        } else {
+            fprintf(stderr, "No right parenthesis found\n");
+            exit(1);
+        }
+        return d;
+    } else {
+        char *end;
+        double d = strtod(str, &end);
+        if (*end != '\0') {
+            fprintf(stderr, "Unable to parse %s as expression primary\n", str);
+            exit(1);
+        }
+        (*n)++;
+        clang_disposeString(s);
+        return d;
+    }
+}
+
+static double eval_term(CXToken *tokens, unsigned *n, unsigned last) {
+    double left = eval_prim(tokens, n, last);
+    while (*n <= last) {
+        CXString s = clang_getTokenSpelling(TU, tokens[*n]);
+        const char *str = clang_getCString(s);
+        if (!strcmp(str, "*")) {
+            (*n)++;
+            left *= eval_prim(tokens, n, last);
+        } else if (!strcmp(str, "/")) {
+            (*n)++;
+            left /= eval_prim(tokens, n, last);
+        } else {
+            clang_disposeString(s);
+            return left;
+        }
+        clang_disposeString(s);
+    }
+    return left;
+}
+
+static double eval_expr(CXToken *tokens, unsigned *n, unsigned last) {
+    double left = eval_term(tokens, n, last);
+    while (*n <= last) {
+        CXString s = clang_getTokenSpelling(TU, tokens[*n]);
+        const char *str = clang_getCString(s);
+        if (!strcmp(str, "-")) {
+            (*n)++;
+            left -= eval_term(tokens, n, last);
+        } else if (!strcmp(str, "+")) {
+            (*n)++;
+            left += eval_term(tokens, n, last);
+        } else {
+            clang_disposeString(s);
+            return left;
+        }
+        clang_disposeString(s);
+    }
+    return left;
+}
+
+static double eval_tokens(CXToken *tokens, unsigned first, unsigned last) {
+    unsigned n = first;
+    double d = eval_expr(tokens, &n, last);
+    if (n <= last) {
+        fprintf(stderr, "Unable to parse tokens as expression\n");
+        exit(1);
+    }
+    return d;
+}
+
 static void get_token_position(CXToken token, unsigned *lnum,
                                unsigned *pos, unsigned *off)
 {
@@ -1804,6 +1902,10 @@ static void replace_struct_array(unsigned *_saidx, unsigned *_clidx,
                                  CXToken *tokens, unsigned n_tokens)
 {
     unsigned saidx = *_saidx, off, i, n = *_n, j;
+    StructArrayList *sal = &struct_array_lists[saidx];
+    StructDeclaration *decl = sal->struct_decl_idx != (unsigned) -1 ?
+                              &structs[sal->struct_decl_idx] : NULL;
+    int is_union = decl ? decl->is_union : 0;
 
     // we assume here the indenting for the first opening token,
     // i.e. the '{', is already taken care of
@@ -1817,7 +1919,9 @@ static void replace_struct_array(unsigned *_saidx, unsigned *_clidx,
         unsigned expr_off_s, expr_off_e, val_idx, val_off_s, val_off_e, saidx2,
                  indent_token_end, next_indent_token_start, val_token_start,
                  val_token_end;
+        int print_normal = 1;
         CXString spelling;
+        StructMember *member = decl ? &decl->entries[j] : NULL;
 
         val_idx = find_value_index(&struct_array_lists[saidx], j);
 
@@ -1826,6 +1930,8 @@ static void replace_struct_array(unsigned *_saidx, unsigned *_clidx,
         if (val_idx == (unsigned) -1) {
             unsigned depth = struct_array_lists[saidx].array_depth;
             unsigned idx = struct_array_lists[saidx].struct_decl_idx;
+            if (is_union) // Don't print the filler zeros for unions
+                continue;
             if (depth > 1) {
                 print_literal_text("{ 0 }", lnum, cpos);
             } else if (depth == 1) {
@@ -1861,8 +1967,44 @@ static void replace_struct_array(unsigned *_saidx, unsigned *_clidx,
         // adjust position
         get_token_position(tokens[val_token_start], lnum, cpos, &off);
 
+        if (is_union && j != 0) {
+            StructMember *first_member = &decl->entries[0];
+            if ((!strcmp(first_member->type, "double") ||
+                 !strcmp(first_member->type, "float")) && !first_member->n_ptrs) {
+                fprintf(stderr, "Can't convert type %s to %s for union\n",
+                        member->type, first_member->type);
+                exit(1);
+            }
+            if (first_member->n_ptrs)
+                print_literal_text("(void*) ", lnum, cpos);
+            if (member->n_ptrs)
+                print_literal_text("(intptr_t) ", lnum, cpos);
+
+            if ((!strcmp(member->type, "double") ||
+                 !strcmp(member->type, "float")) && !member->n_ptrs) {
+                // Convert a literal floating pointer number (not a pointer to
+                // one of them) to its binary representation
+                union {
+                    uint64_t i;
+                    double f;
+                } if64;
+                char buf[20];
+                if64.f = eval_tokens(tokens, val_token_start, val_token_end);
+                if (!strcmp(member->type, "float")) {
+                    union {
+                        uint32_t i;
+                        float f;
+                    } if32;
+                    if32.f = if64.f;
+                    if64.i = if32.i;
+                }
+                snprintf(buf, sizeof(buf), "%#"PRIx64, if64.i);
+                print_literal_text(buf, lnum, cpos);
+                print_normal = 0;
+            }
+        }
         // print values out of order
-        for (n = val_token_start; n <= val_token_end; n++) {
+        for (n = val_token_start; n <= val_token_end && print_normal; n++) {
             print_token_wrapper(tokens, n_tokens, &n, lnum, cpos,
                                 &saidx2, _clidx, off);
             if (n != val_token_end)
@@ -1884,6 +2026,9 @@ static void replace_struct_array(unsigned *_saidx, unsigned *_clidx,
             indent_token_end = find_token_for_offset(tokens, n_tokens, *_n,
                                                      struct_array_lists[saidx].value_offset.end);
         }
+
+        if (is_union) // Unions should be initialized by only one element
+            break;
 
         for (; n < indent_token_end; n++) {
             print_token(tokens[n], lnum, cpos);
