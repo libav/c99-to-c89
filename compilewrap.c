@@ -26,7 +26,7 @@
 #include <unistd.h>
 #endif
 
-#define CONVERTER "converter"
+#define CONVERTER "c99conv"
 
 static char* create_cmdline(char **argv)
 {
