@@ -124,7 +124,7 @@ int main(int argc, char* argv[])
             sprintf(temp_file_1, "%s_preprocessed.c", outname);
             sprintf(temp_file_2, "%s_converted.c", outname);
             if (msvc) {
-                sprintf(arg_buffer, "/Fi%s", temp_file_1);
+                sprintf(arg_buffer, "-Fi%s", temp_file_1);
                 cpp_argv[cpp_argc++] = arg_buffer;
             } else {
                 cpp_argv[cpp_argc++] = "-o";
@@ -135,7 +135,7 @@ int main(int argc, char* argv[])
             pass_argv[pass_argc++] = argv[i];
             cc_argv[cc_argc++] = argv[i++];
             if (msvc)
-                cpp_argv[cpp_argc++] = "/P";
+                cpp_argv[cpp_argc++] = "-P";
             else
                 cpp_argv[cpp_argc++] = "-E";
             flag_compile = 1;
