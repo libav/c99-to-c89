@@ -105,14 +105,17 @@ int main(int argc, char *argv[])
     char **cpp_argv, **cc_argv, **pass_argv;
     const char *source_file = NULL;
     const char *outname = NULL;
+    const char *convert_options = "";
 
     if (i < argc && !strcmp(argv[i], "-keep")) {
         keep = 1;
         i++;
     }
 
-    if (i < argc && !strncmp(argv[i], "cl", 2) && (argv[i][2] == '.' || argv[i][2] == '\0'))
+    if (i < argc && !strncmp(argv[i], "cl", 2) && (argv[i][2] == '.' || argv[i][2] == '\0')) {
         msvc = 1;
+        convert_options = "-ms";
+    }
 
     sprintf(temp_file_1, "preprocessed_%d.c", getpid());
     sprintf(temp_file_2, "converted_%d.c", getpid());
@@ -271,7 +274,8 @@ int main(int argc, char *argv[])
     else
         ptr = cmdline + (ptr + 1 - argv[0]);
 
-    sprintf(ptr, "%s %s %s", CONVERTER, temp_file_1, temp_file_2);
+    sprintf(ptr, "%s %s %s %s", CONVERTER, convert_options, temp_file_1,
+                                temp_file_2);
 
     exit_code = exec_cmdline(cmdline);
     if (exit_code) {

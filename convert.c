@@ -2496,7 +2496,7 @@ static void cleanup(void)
 #define DEBUG 0
 }
 
-int convert(const char *infile, const char *outfile)
+int convert(const char *infile, const char *outfile, int ms_compat)
 {
     CXIndex index;
     unsigned n_tokens;
@@ -2504,6 +2504,13 @@ int convert(const char *infile, const char *outfile)
     CXSourceRange range;
     CXCursor cursor;
     CursorRecursion rec;
+    const char *ms_argv[] = { "-fms-extensions", "-target", "i386-pc-win32", NULL };
+    const char **argv = NULL;
+    int argc = 0;
+    if (ms_compat) {
+        argv = ms_argv;
+        argc = 3;
+    }
 
     out    = fopen(outfile, "w");
     if (!out) {
@@ -2511,8 +2518,8 @@ int convert(const char *infile, const char *outfile)
         return 1;
     }
     index  = clang_createIndex(1, 1);
-    TU     = clang_createTranslationUnitFromSourceFile(index, infile, 0,
-                                                       NULL, 0, NULL);
+    TU     = clang_createTranslationUnitFromSourceFile(index, infile, argc,
+                                                       argv, 0, NULL);
     cursor = clang_getTranslationUnitCursor(TU);
     range  = clang_getCursorExtent(cursor);
     clang_tokenize(TU, range, &tokens, &n_tokens);
@@ -2536,9 +2543,19 @@ int convert(const char *infile, const char *outfile)
 
 int main(int argc, char *argv[])
 {
-    if (argc < 3) {
-        fprintf(stderr, "%s <in> <out>\n", argv[0]);
+    int arg = 1;
+    int ms_compat = 0;
+    while (arg < argc) {
+        if (!strcmp(argv[arg], "-ms")) {
+            ms_compat = 1;
+        } else {
+            break;
+        }
+        arg++;
+    }
+    if (argc < arg + 2) {
+        fprintf(stderr, "%s [-ms] <in> <out>\n", argv[0]);
         return 1;
     }
-    return convert(argv[1], argv[2]);
+    return convert(argv[arg], argv[arg + 1], ms_compat);
 }
