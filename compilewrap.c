@@ -90,9 +90,9 @@ int main(int argc, char* argv[])
                 input_obj = 1;
             }
         }
-        if (!strncmp(argv[i], "-Fo", 3) || !strcmp(argv[i], "-out") || !strcmp(argv[i], "-o")) {
+        if (!strncmp(argv[i], "-Fo", 3) || !strncmp(argv[i], "-Fi", 3) || !strncmp(argv[i], "-Fe", 3) || !strcmp(argv[i], "-out") || !strcmp(argv[i], "-o")) {
             // Copy the output filename only to cc
-            if ((!strcmp(argv[i], "-Fo") || !strcmp(argv[i], "-out")) && i + 1 < argc) {
+            if ((!strcmp(argv[i], "-Fo") || !strcmp(argv[i], "-out") || !strcmp(argv[i], "-Fi") || !strcmp(argv[i], "-Fe")) && i + 1 < argc) {
                 /* Support the nonstandard syntax -Fo filename or -out filename, to get around
                  * msys file name mangling issues. */
                 if (!strcmp(argv[i], "-out"))
@@ -103,7 +103,7 @@ int main(int argc, char* argv[])
                 cc_argv[cc_argc++] = fo_buffer;
                 pass_argv[pass_argc++] = fo_buffer;
                 i += 2;
-            } else if (!strncmp(argv[i], "-Fo", 3)) {
+            } else if (!strncmp(argv[i], "-Fo", 3) || !strncmp(argv[i], "-Fi", 3) || !strncmp(argv[i], "-Fe", 3)) {
                 cc_argv[cc_argc++] = argv[i];
                 pass_argv[pass_argc++] = argv[i];
                 outname = argv[i] + 3;
