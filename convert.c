@@ -1649,6 +1649,9 @@ static double eval_prim(CXToken *tokens, unsigned *n, unsigned last) {
     } else {
         char *end;
         double d = strtod(str, &end);
+        // Handle a possible f suffix for float constants
+        if (end != str && (*end == 'f' || *end == 'F'))
+            end++;
         if (*end != '\0') {
             fprintf(stderr, "Unable to parse %s as expression primary\n", str);
             exit(1);
