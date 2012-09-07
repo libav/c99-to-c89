@@ -2,6 +2,7 @@
  * C99-to-MSVC-compatible-C89 syntax converter
  * Copyright (c) 2012 Ronald S. Bultje <rsbultje@gmail.com>
  * Copyright (c) 2012 Derek Buitenhuis <derek.buitenhuis@gmail.com>
+ * Copyright (c) 2012 Martin Storsjo <martin@martin.st>
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
