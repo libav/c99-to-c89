@@ -2137,6 +2137,8 @@ static void replace_struct_array(unsigned *_saidx, unsigned *_clidx, unsigned *e
         if (is_union) // Unions should be initialized by only one element
             break;
 
+        if (n < indent_token_end)
+            indent_for_token(tokens[n], lnum, cpos, &off);
         for (; n < indent_token_end; n++) {
             print_token(tokens[n], lnum, cpos);
             indent_for_token(tokens[n + 1], lnum, cpos, &off);
