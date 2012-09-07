@@ -55,18 +55,23 @@ static char* create_cmdline(char **argv)
 
 int main(int argc, char* argv[])
 {
-    int i, cpp_argc, cc_argc, pass_argc;
+    int i = 1, cpp_argc, cc_argc, pass_argc;
     char **cpp_argv, **cc_argv, **pass_argv;
     int exit_code;
     int input_source = 0, input_obj = 0, flag_compile = 0;
-    int msvc = 0;
+    int msvc = 0, keep = 0;
     const char *source_file = NULL;
     char *cmdline;
     char temp_file_1[200], temp_file_2[200], arg_buffer[200], fo_buffer[200];
     const char *outname = NULL;
     char *ptr;
 
-    if (argc > 1 && !strncmp(argv[1], "cl", 2))
+    if (i < argc && !strcmp(argv[i], "-keep")) {
+        keep = 1;
+        i++;
+    }
+
+    if (i < argc && !strncmp(argv[i], "cl", 2))
         msvc = 1;
 
     sprintf(temp_file_1, "preprocessed_%d.c", getpid());
@@ -76,7 +81,7 @@ int main(int argc, char* argv[])
     cc_argv = malloc((argc + 3) * sizeof(*cc_argv));
     pass_argv = malloc((argc + 3) * sizeof(*pass_argv));
     cpp_argc = cc_argc = pass_argc = 0;
-    for (i = 1; i < argc; ) {
+    for (; i < argc; ) {
         int len = strlen(argv[i]);
         int ext_inputfile = 0;
         if (len >= 2) {
@@ -183,7 +188,8 @@ int main(int argc, char* argv[])
     cmdline = create_cmdline(cpp_argv);
     exit_code = system(cmdline);
     if (exit_code) {
-        unlink(temp_file_1);
+        if (!keep)
+            unlink(temp_file_1);
         goto exit;
     }
     free(cmdline);
@@ -200,15 +206,19 @@ int main(int argc, char* argv[])
     sprintf(ptr, "%s %s %s", CONVERTER, temp_file_1, temp_file_2);
     exit_code = system(cmdline);
     if (exit_code) {
-        unlink(temp_file_1);
-        unlink(temp_file_2);
+        if (!keep) {
+            unlink(temp_file_1);
+            unlink(temp_file_2);
+        }
         goto exit;
     }
     free(cmdline);
-    unlink(temp_file_1);
+    if (!keep)
+        unlink(temp_file_1);
     cmdline = create_cmdline(cc_argv);
     exit_code = system(cmdline);
-    unlink(temp_file_2);
+    if (!keep)
+        unlink(temp_file_2);
 exit:
     free(cmdline);
     free(cc_argv);
