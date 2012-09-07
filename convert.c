@@ -1466,15 +1466,17 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
     case CXCursor_UnexposedExpr:
         if (parent.kind == CXCursor_InitListExpr) {
             CXString spelling = clang_getTokenSpelling(TU, tokens[0]);
+            CXString spelling2 = clang_getTokenSpelling(TU, tokens[1]);
             const char *istr = clang_getCString(spelling);
+            const char *istr2 = clang_getCString(spelling2);
             StructArrayList *l = &struct_array_lists[rec.parent->data.sal_idx];
             StructArrayItem *sai;
 
-            if (!strcmp(istr, "[") || !strcmp(istr, ".")) {
-                enum StructArrayType exp_type = istr[0] == '.' ?
+            if (!strcmp(istr, "[") || !strcmp(istr, ".") || !strcmp(istr2, ":")) {
+                enum StructArrayType exp_type = (istr[0] == '.' || istr2[0] == ':') ?
                                                 TYPE_STRUCT : TYPE_ARRAY;
-                // [index] = val   or   .member = val
-                // ^^^^^^^^^^^^^        ^^^^^^^^^^^^^
+                // [index] = val   or   .member = val   or   member: val
+                // ^^^^^^^^^^^^^        ^^^^^^^^^^^^^        ^^^^^^^^^^^
                 if (l->type == TYPE_IRRELEVANT) {
                     l->type = exp_type;
                 } else if (l->type != exp_type) {
@@ -1500,6 +1502,8 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
             sai->expression_offset.end   = get_token_offset(tokens[n_tokens - 2]);
             if (!strcmp(istr, ".")) {
                 sai->value_offset.start = get_token_offset(tokens[3]);
+            } else if (!strcmp(istr2, ":")) {
+                sai->value_offset.start = get_token_offset(tokens[2]);
             } else if (!strcmp(istr, "[")) {
                 unsigned n;
                 for (n = 2; n < n_tokens - 2; n++) {
@@ -1519,6 +1523,7 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
             clang_visitChildren(cursor, callback, &rec);
             struct_array_lists[rec.parent->data.sal_idx].n_entries++;
             clang_disposeString(spelling);
+            clang_disposeString(spelling2);
         } else {
             clang_visitChildren(cursor, callback, &rec);
         }
