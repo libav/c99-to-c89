@@ -128,6 +128,13 @@ static double tget_double(int le)
     return i.f64;
 }
 
+extern __inline __attribute__ ((__always_inline__)) __attribute__ ((__gnu_inline__, __artificial__)) int
+__attribute__ ((__nothrow__ , __leaf__)) __signbitl (long double __x)
+{
+  __extension__ union { long double __l; int __i[3]; } __u = { __l: __x };
+  return (__u.__i[2] & 0x8000) != 0;
+}
+
 int main(int argc, char *argv[])
 {
     return pix_fmt_info[argc].depth;
