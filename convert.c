@@ -1182,6 +1182,27 @@ static unsigned get_n_tokens(CXToken *tokens, unsigned n_tokens)
     return n_tokens - !!res;
 }
 
+static char *find_variable_name(CursorRecursion *rec)
+{
+    unsigned n;
+    // typename varname = { ...
+    // typename can be a typedef or "union something"
+    for (n = 1; n < rec->n_tokens; n++) {
+        CXString spelling = clang_getTokenSpelling(TU, rec->tokens[n]);
+        if (!strcmp(clang_getCString(spelling), "=")) {
+            char *name;
+            clang_disposeString(spelling);
+            spelling = clang_getTokenSpelling(TU, rec->tokens[n - 1]);
+            name = strdup(clang_getCString(spelling));
+            clang_disposeString(spelling);
+            return name;
+        }
+        clang_disposeString(spelling);
+    }
+    fprintf(stderr, "Unable to find variable name in assignment\n");
+    abort();
+}
+
 static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
                                         CXClientData client_data)
 {
@@ -1426,15 +1447,10 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
             l = &struct_array_lists[rec.data.sal_idx];
             if (l->convert_to_assignment &&
                 rec.parent->kind == CXCursor_VarDecl) {
-                // Assumes "union foo bar", fix to handle typedeffed unions as well
-                //                    ^^^
-                CXString name = clang_getTokenSpelling(TU,
-                                                       rec.parent->tokens[2]);
                 l->value_offset.start -= 2; // Swallow the assignment character
                 l->value_offset.end   += 1; // Swallow the final semicolon
                 free(l->name);
-                l->name = strdup(clang_getCString(name));
-                clang_disposeString(name);
+                l->name = find_variable_name(rec.parent);
                 rec_ptr = (CursorRecursion *) client_data;
                 while (rec_ptr->kind != CXCursor_CompoundStmt)
                     rec_ptr = rec_ptr->parent;
