@@ -1614,7 +1614,8 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
 
 static double eval_expr(CXToken *tokens, unsigned *n, unsigned last);
 
-static double eval_prim(CXToken *tokens, unsigned *n, unsigned last) {
+static double eval_prim(CXToken *tokens, unsigned *n, unsigned last)
+{
     CXString s;
     const char *str;
     if (*n > last) {
@@ -1662,7 +1663,8 @@ static double eval_prim(CXToken *tokens, unsigned *n, unsigned last) {
     }
 }
 
-static double eval_term(CXToken *tokens, unsigned *n, unsigned last) {
+static double eval_term(CXToken *tokens, unsigned *n, unsigned last)
+{
     double left = eval_prim(tokens, n, last);
     while (*n <= last) {
         CXString s = clang_getTokenSpelling(TU, tokens[*n]);
@@ -1682,7 +1684,8 @@ static double eval_term(CXToken *tokens, unsigned *n, unsigned last) {
     return left;
 }
 
-static double eval_expr(CXToken *tokens, unsigned *n, unsigned last) {
+static double eval_expr(CXToken *tokens, unsigned *n, unsigned last)
+{
     double left = eval_term(tokens, n, last);
     while (*n <= last) {
         CXString s = clang_getTokenSpelling(TU, tokens[*n]);
@@ -1702,7 +1705,8 @@ static double eval_expr(CXToken *tokens, unsigned *n, unsigned last) {
     return left;
 }
 
-static double eval_tokens(CXToken *tokens, unsigned first, unsigned last) {
+static double eval_tokens(CXToken *tokens, unsigned first, unsigned last)
+{
     unsigned n = first;
     double d = eval_expr(tokens, &n, last);
     if (n <= last) {
