@@ -104,10 +104,28 @@ union av_intfloat32 {
     float f;
 };
 
+typedef union {
+    unsigned long long u64;
+    unsigned int   u32[2];
+    unsigned short u16[4];
+    unsigned char  u8 [8];
+    double   f64;
+    float    f32[2];
+} av_alias64;
+
+unsigned long long func1(void);
+unsigned long long func2(void);
+
 int foo(float f) {
     union av_intfloat32 s = { .f = f };
     int other;
     return s.i;
+}
+
+static double tget_double(int le)
+{
+    av_alias64 i = { .u64 = le ? func1() : func2()};
+    return i.f64;
 }
 
 int main(int argc, char *argv[])
