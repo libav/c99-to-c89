@@ -1542,7 +1542,7 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
                 n_allocated_end_scopes = num;
             }
             e = &end_scopes[n_end_scopes++];
-            e->end = get_token_offset(tokens[n_tokens - 1]);
+            e->end = get_token_offset(tokens[n_tokens - 2]);
             e->n_scopes = rec.end_scopes;
         }
         break;
@@ -1737,12 +1737,6 @@ static void indent_for_token(CXToken token, unsigned *lnum,
         fprintf(out, "\n");
     for (; *pos < p; (*pos)++)
         fprintf(out, " ");
-}
-
-static void print_literal_text_noinc(const char *str, unsigned *lnum,
-                                     unsigned *pos)
-{
-    fprintf(out, "%s", str);
 }
 
 static void print_literal_text(const char *str, unsigned *lnum,
@@ -1990,27 +1984,34 @@ static void replace_struct_array(unsigned *_saidx, unsigned *_clidx, unsigned *e
     int is_union = decl ? decl->is_union : 0;
 
     if (sal->convert_to_assignment) {
-        print_literal_text_noinc(";", lnum, cpos);
+        CXString spelling;
+        print_literal_text(";", lnum, cpos);
         for (i = 0; i < sal->n_entries; i++) {
             StructArrayItem *sai = &sal->entries[i];
             unsigned token_start = find_token_for_offset(tokens, n_tokens, *_n, sai->value_offset.start);
             unsigned token_end   = find_token_for_offset(tokens, n_tokens, *_n, sai->value_offset.end);
             unsigned saidx2 = 0;
 
-            print_literal_text_noinc(sal->name, lnum, cpos);
-            print_literal_text_noinc(".", lnum, cpos);
-            print_literal_text_noinc(structs[sal->struct_decl_idx].entries[sai->index].name, lnum, cpos);
-            print_literal_text_noinc("=", lnum, cpos);
+            print_literal_text(sal->name, lnum, cpos);
+            print_literal_text(".", lnum, cpos);
+            print_literal_text(structs[sal->struct_decl_idx].entries[sai->index].name, lnum, cpos);
+            print_literal_text("=", lnum, cpos);
             get_token_position(tokens[token_start], lnum, cpos, &off);
             for (n = token_start; n <= token_end; n++)
                 print_token_wrapper(tokens, n_tokens, &n, lnum, cpos,
                                     &saidx2, _clidx, esidx, off);
-            print_literal_text_noinc(";", lnum, cpos);
+            print_literal_text(";", lnum, cpos);
         }
         n = find_token_for_offset(tokens, n_tokens, *_n,
                                   struct_array_lists[saidx].value_offset.end);
         *_n = n;
-        print_literal_text_noinc("{", lnum, cpos);
+        print_literal_text("{", lnum, cpos);
+
+        // adjust token index and position back
+        get_token_position(tokens[n], lnum, cpos, &off);
+        spelling = clang_getTokenSpelling(TU, tokens[n]);
+        (*cpos) += strlen(clang_getCString(spelling));
+        clang_disposeString(spelling);
         return;
     }
 
@@ -2170,13 +2171,6 @@ static void print_token_wrapper(CXToken *tokens, unsigned n_tokens,
            (comp_literal_lists[*clidx].type == TYPE_UNKNOWN ||
             comp_literal_lists[*clidx].context.start < off))
         (*clidx)++;
-    while (*esidx < n_end_scopes && off >= end_scopes[*esidx].end) {
-        unsigned i;
-        for (i = 0; i < end_scopes[*esidx].n_scopes; i++)
-            print_literal_text_noinc("}", lnum, cpos);
-        (*esidx)++;
-        print_literal_text_noinc("\n", lnum, cpos);
-    }
 
     if (*saidx < n_struct_array_lists &&
         off == struct_array_lists[*saidx].value_offset.start) {
@@ -2202,6 +2196,14 @@ static void print_token_wrapper(CXToken *tokens, unsigned n_tokens,
             (*clidx)++;
     } else {
         print_token(tokens[*n], lnum, cpos);
+    }
+
+    while (*esidx < n_end_scopes && off >= end_scopes[*esidx].end - 1) {
+        unsigned i;
+        for (i = 0; i < end_scopes[*esidx].n_scopes; i++)
+            print_literal_text("}", lnum, cpos);
+        (*cpos) -= end_scopes[*esidx].n_scopes;
+        (*esidx)++;
     }
 }
 
