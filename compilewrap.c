@@ -28,6 +28,30 @@
 
 #define CONVERTER "c99conv"
 
+/* On Windows, system() has very frugal length limits */
+#ifdef _WIN32
+static int w32createprocess(char *cmdline)
+{
+    STARTUPINFO si = { 0 };
+    PROCESS_INFORMATION pi = { 0 };
+    DWORD exit_code;
+    if (CreateProcess(NULL, cmdline, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
+        WaitForSingleObject(pi.hProcess, INFINITE);
+        if (!GetExitCodeProcess(pi.hProcess, &exit_code)) {
+            exit_code = -1;
+        }
+        CloseHandle(pi.hProcess);
+        CloseHandle(pi.hThread);
+        return exit_code;
+    } else {
+        return -1;
+    }
+}
+#define exec_cmdline w32createprocess
+#else
+#define exec_cmdline system
+#endif
+
 static char* create_cmdline(char **argv)
 {
     int i, len = 0, pos = 0;
@@ -181,12 +205,12 @@ int main(int argc, char* argv[])
     if (!flag_compile || !source_file || !outname) {
         /* Doesn't seem like we should be invoked, just call the parameters as such */
         cmdline = create_cmdline(pass_argv);
-        exit_code = system(cmdline);
+        exit_code = exec_cmdline(cmdline);
         goto exit;
     }
 
     cmdline = create_cmdline(cpp_argv);
-    exit_code = system(cmdline);
+    exit_code = exec_cmdline(cmdline);
     if (exit_code) {
         if (!keep)
             unlink(temp_file_1);
@@ -204,7 +228,7 @@ int main(int argc, char* argv[])
         ptr = cmdline + (ptr + 1 - argv[0]);
     }
     sprintf(ptr, "%s %s %s", CONVERTER, temp_file_1, temp_file_2);
-    exit_code = system(cmdline);
+    exit_code = exec_cmdline(cmdline);
     if (exit_code) {
         if (!keep) {
             unlink(temp_file_1);
@@ -216,7 +240,7 @@ int main(int argc, char* argv[])
     if (!keep)
         unlink(temp_file_1);
     cmdline = create_cmdline(cc_argv);
-    exit_code = system(cmdline);
+    exit_code = exec_cmdline(cmdline);
     if (!keep)
         unlink(temp_file_2);
 exit:
