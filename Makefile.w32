@@ -1,0 +1,36 @@
+EXT=.exe
+
+all: c99conv$(EXT) c99wrap$(EXT)
+
+CLANGDIR=/home/rbultje/Projects/llvm-3.1.src
+CC=cl.exe
+CFLAGS=-nologo -Z7 -D_CRT_SECURE_NO_WARNINGS=1 -Dpopen=_popen -Dunlink=_unlink -Dstrdup=_strdup -Dsnprintf=_snprintf -I. -I$(CLANGDIR)/tools/clang/include
+LDFLAGS=-nologo -Z7 $(CLANGDIR)/lib/Release/libclang.lib
+
+clean:
+	rm -f c99conv$(EXT) c99wrap$(EXT) convert.o compilewrap.o
+	rm -f unit.c.c unit2.c.c
+
+test1: c99conv$(EXT)
+	$(CC) -P unit.c -Fiunit.prev.c
+	./c99conv unit.prev.c unit.post.c
+	diff -u unit.{prev,post}.c
+
+test2: c99conv$(EXT)
+	$(CC) -P unit2.c -Fiunit2.prev.c
+	./c99conv unit2.prev.c unit2.post.c
+	diff -u unit2.{prev,post}.c
+
+test3: c99conv$(EXT)
+	$(CC) $(CFLAGS) -P -Ficonvert.prev.c convert.c
+	./c99conv convert.prev.c convert.post.c
+	diff -u convert.{prev,post}.c
+
+c99conv$(EXT): convert.o
+	$(CC) -Fe$@ $< $(LDFLAGS) $(LIBS)
+
+c99wrap$(EXT): compilewrap.o
+	$(CC) -Fe$@ $< $(LDFLAGS)
+
+%.o: %.c
+	$(CC) $(CFLAGS) -Fo$@ -c $<
