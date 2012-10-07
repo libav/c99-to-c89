@@ -17,12 +17,12 @@ clean:
 test1: c99conv$(EXT)
 	$(CC) -E unit.c -o unit.prev.c
 	./c99conv unit.prev.c unit.post.c
-	diff -u unit.{prev,post}.c
+	diff -u unit.{prev,post}.c || :
 
 test2: c99conv$(EXT)
 	$(CC) -E unit2.c -o unit2.prev.c
 	./c99conv unit2.prev.c unit2.post.c
-	diff -u unit2.{prev,post}.c
+	diff -u unit2.{prev,post}.c || :
 
 test3: c99conv$(EXT)
 	$(CC) $(CFLAGS) -E -o convert.prev.c convert.c
