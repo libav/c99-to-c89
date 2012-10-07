@@ -878,6 +878,8 @@ enum CLType {
     TYPE_CONST_DECL,    // anything with a const that can be statically
                         // declared, e.g. x = ((const int[]){ y, z })[0] ->
                         // static const int tmp[] = { y, z } [..] x = tmp[0]
+    TYPE_NEW_CONTEXT,   // func(); int x; [..] -> func(); { int x; [..] }
+    TYPE_LOOP_CONTEXT,  // for(int i = 0; ... -> { int i = 0; for (; ... }
 };
 
 typedef struct {
@@ -909,6 +911,7 @@ struct CursorRecursion {
     enum CXCursorKind kind;
     CursorRecursion *parent;
     unsigned child_cntr;
+    unsigned allow_var_decls;
     CXToken *tokens;
     unsigned n_tokens;
     union {
@@ -1112,6 +1115,30 @@ static void analyze_compound_literal_lineage(CompoundLiteralList *l,
     }
 }
 
+static void analyze_decl_context(CompoundLiteralList *l,
+                                 CursorRecursion *rec)
+{
+    CursorRecursion *p = rec->parent;
+
+    // FIXME if parent.kind == CXCursor_CompoundStmt, simply go from here until
+    // the end of that compound context.
+    // in other cases (e.g. declaration inside a for/while), find the complete
+    // context (e.g. before the while/for) and declare new context around that
+    // whole thing
+    if (p->kind == CXCursor_CompoundStmt) {
+        l->type = TYPE_NEW_CONTEXT;
+        l->context.start = get_token_offset(rec->tokens[0]);
+        l->cast_token.start = get_token_offset(rec->tokens[0]);
+        l->context.end = get_token_offset(p->tokens[p->n_tokens - 1]);
+    } else if (p->kind == CXCursor_ForStmt && rec->parent->child_cntr == 1) {
+        l->type = TYPE_LOOP_CONTEXT;
+        l->context.start = get_token_offset(p->tokens[0]);
+        l->context.end = get_token_offset(p->tokens[p->n_tokens - 1]);
+        l->cast_token.start = get_token_offset(rec->tokens[0]);
+        l->cast_token.end = get_token_offset(rec->tokens[rec->n_tokens - 2]);
+    }
+}
+
 static void get_comp_literal_type_info(StructArrayList *sal,
                                        CompoundLiteralList *cl,
                                        CXToken *tokens, unsigned n_tokens,
@@ -1228,12 +1255,15 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
 
     memset(&rec, 0, sizeof(rec));
     rec.kind = cursor.kind;
+    rec.allow_var_decls = 0;
     rec.parent = (CursorRecursion *) client_data;
     rec.parent->child_cntr++;
     rec.tokens = tokens;
     rec.n_tokens = get_n_tokens(tokens, n_tokens);
     if (cursor.kind == CXCursor_FunctionDecl)
         rec.is_function = 1;
+    if (parent.kind == CXCursor_CompoundStmt)
+        rec.parent->allow_var_decls &= cursor.kind == CXCursor_DeclStmt;
 
     rec_ptr = (CursorRecursion *) client_data;
     while (rec_ptr) {
@@ -1245,8 +1275,8 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
     }
 
 #define DEBUG 0
-    dprintf("DERP: %d [%d] %s @ %d:%d in %s\n", cursor.kind, parent.kind,
-            clang_getCString(str), line, col,
+    dprintf("DERP: %d [%d:%d] %s @ %d:%d in %s\n", cursor.kind, parent.kind,
+            rec.parent->child_cntr, clang_getCString(str), line, col,
             clang_getCString(filename));
     for (i = 0; i < n_tokens; i++)
     {
@@ -1300,6 +1330,32 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
         }
         break;
     }
+    case CXCursor_DeclStmt:
+        if (parent.kind != CXCursor_CompoundStmt ||
+            !rec.parent->allow_var_decls) {
+            // e.g. void function() { int x; function(); int y; ... }
+            //                                           ^^^^^^
+            CompoundLiteralList *l;
+
+            if (n_comp_literal_lists == n_allocated_comp_literal_lists) {
+                unsigned num = n_allocated_comp_literal_lists + 16;
+                void *mem = realloc(comp_literal_lists,
+                                    sizeof(*comp_literal_lists) * num);
+                if (!mem) {
+                    fprintf(stderr, "Failed to allocate memory for complitlist\n");
+                    exit(1);
+                }
+                comp_literal_lists = (CompoundLiteralList *) mem;
+                n_allocated_comp_literal_lists = num;
+            }
+            l = &comp_literal_lists[n_comp_literal_lists++];
+            memset(l, 0, sizeof(*l));
+            clang_visitChildren(cursor, callback, &rec);
+            analyze_decl_context(l, &rec);
+        } else {
+            clang_visitChildren(cursor, callback, &rec);
+        }
+        break;
     case CXCursor_VarDecl: {
         // e.g. static const struct <type> name { val }
         //      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -1549,6 +1605,7 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
         }
         break;
     case CXCursor_CompoundStmt:
+        rec.allow_var_decls = 1;
         clang_visitChildren(cursor, callback, &rec);
         if (rec.end_scopes) {
             EndScope *e;
@@ -1991,6 +2048,54 @@ static void replace_comp_literal(CompoundLiteralList *l,
                                         l->value_token.end);
             get_token_position(tokens[*_n + 1], lnum, cpos, &off);
             (*clidx)++;
+        }
+    } else if (l->type == TYPE_NEW_CONTEXT) {
+        if (l->context.start == l->cast_token.start) {
+            unsigned off;
+
+            print_literal_text("{ ", lnum, cpos);
+
+            // FIXME it may be easier to replicate the variable declaration
+            // and initialization here, and then to actually empty out the
+            // original location where the variable initialization/declaration
+            // happened
+            l->context.start = l->context.end;
+            l->type = TYPE_TEMP_ASSIGN;
+            reorder_compound_literal_list(l - comp_literal_lists);
+            get_token_position(tokens[*_n], lnum, cpos, &off);
+            (*_n)--;
+        }
+    } else if (l->type == TYPE_LOOP_CONTEXT) {
+        if (l->context.start < l->cast_token.start) {
+            unsigned off, idx1, idx2, n;
+
+            // add variable declaration/init, add terminating ';'
+            print_literal_text("{ ", lnum, cpos);
+            l->context.start = l->cast_token.start;
+            idx1 = find_token_for_offset(tokens, n_tokens, *_n,
+                                         l->cast_token.start);
+            idx2 = find_token_for_offset(tokens, n_tokens, *_n,
+                                         l->cast_token.end);
+            get_token_position(tokens[idx1], lnum, cpos, &off);
+            for (n = idx1; n <= idx2; n++) {
+                indent_for_token(tokens[n], lnum, cpos, &off);
+                print_token(tokens[n], lnum, cpos);
+            }
+            print_literal_text("; ", lnum, cpos);
+            get_token_position(tokens[*_n], lnum, cpos, &off);
+            (*_n)--;
+        } else if (l->context.start == l->cast_token.start) {
+            unsigned off;
+
+            // remove variable declaration/init, remove ',' if present
+            l->context.start = l->context.end;
+            l->type = TYPE_TEMP_ASSIGN;
+            reorder_compound_literal_list(l - comp_literal_lists);
+            (*_n)--;
+            do {
+                (*_n)++;
+                get_token_position(tokens[*_n], lnum, cpos, &off);
+            } while (off < l->cast_token.end);
         }
     }
 }

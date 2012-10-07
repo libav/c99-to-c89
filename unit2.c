@@ -14,6 +14,7 @@ enum PixelFormat {
     PIX_FMT_RGBA,
     PIX_FMT_DUMMY,
     PIX_FMT_GRAY8,
+    PIX_FMT_NB,
 };
 
 enum ColorType {
@@ -137,5 +138,9 @@ __attribute__ ((__nothrow__ , __leaf__)) __signbitl (long double __x)
 
 int main(int argc, char *argv[])
 {
-    return pix_fmt_info[argc].depth;
+    printf("Hi\n");
+    int j = PIX_FMT_NB;
+    for (int i = 0; i < j; i++)
+        return pix_fmt_info[i].depth;
+    return j != 0;
 }
