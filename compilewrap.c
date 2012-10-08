@@ -111,7 +111,7 @@ int main(int argc, char *argv[])
         i++;
     }
 
-    if (i < argc && !strncmp(argv[i], "cl", 2))
+    if (i < argc && !strncmp(argv[i], "cl", 2) && (argv[i][2] == '.' || argv[i][2] == '\0'))
         msvc = 1;
 
     sprintf(temp_file_1, "preprocessed_%d.c", getpid());
