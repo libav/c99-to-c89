@@ -1,0 +1,139 @@
+#!/usr/bin/env perl
+
+# Copyright (c) 2012, Derek Buitenhuis
+#
+# Permission to use, copy, modify, and/or distribute this software for any
+# purpose with or without fee is hereby granted, provided that the above
+# copyright notice and this permission notice appear in all copies.
+#
+# THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+# WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+# MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+# ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+# WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+# ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+# OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+use strict;
+use warnings;
+
+use File::Temp;
+
+# Handle Arguments
+my ($vscript, @objects) = @ARGV;
+
+unless (defined($vscript) && @objects) {
+    print("Usage: makedef <version_script> <objects>\n");
+    exit(0);
+}
+
+unless (-e $vscript) {
+    print("Version script does not exist\n");
+    exit(0);
+}
+
+foreach my $object (@objects) {
+    unless(-e $object) {
+        print("Object does not exist: $object\n");
+        exit(0);
+    }
+}
+
+# Create a lib temporarily to dump symbols from.
+# It's just much easier to do it this way.
+my $lib = mktemp("library.XXXXXXXX").".lib";
+my $objectstring = join(" ", @objects);
+
+`lib -out:$lib $objectstring`;
+if ($?) {
+   printf("Could not create temporary library.\n");
+   exit(1);
+}
+
+open(my $file, "<", $vscript) || die("Cannot open $vscript");
+
+my $started = 0;
+my @regex;
+
+while(<$file>) {
+    chomp;
+
+    # We only care about global symbols
+    if (s/^\s+global://) {
+        $started = 1;
+    } elsif (/^\s+local:/) {
+        $started = 0;
+    }
+
+    next if !$started;
+
+    # Handle multiple symbols on one line
+    my @delim = split(/;/);
+    foreach my $exp (@delim) {
+        # Remove leading and trailing whitespace
+        $exp =~ s/^\s*|\s*$//;
+        # Convert asterisks into its PCRE-friendly equivalent
+        $exp =~ s/\*/.+/;
+
+        push(@regex, $exp);
+    }
+}
+
+close($file);
+
+my @dump = `dumpbin -linkermember:1 $lib`;
+if ($?) {
+    print("Execution of dumpbin failed.\n");
+    exit(1);
+}
+
+# Delete the temp lib, as we no longer need it.
+if(!unlink($lib)) {
+    print("Could not delete temporary library.\n");
+    exit(1);
+}
+
+my @syms;
+$started = 0;
+
+foreach(@dump) {
+    # Where to start and stop parsing
+    if (/public symbols/) {
+        $started = 1;
+    } elsif (/Summary/) {
+        $started = 0;
+    }
+
+    next if !$started;
+
+    # Only process lines with symbols
+    next if !(s/^\s+[0-9A-F]+\s+_//);
+
+    # Perl's chomp only handles whatever is in $/, so in an effort
+    # to be portable, strip trailing newlines manually.
+    s/\r?\n$//;
+
+    # It doesn't matter if we push duplicates here, since we make
+    # the array unique later on.
+    foreach my $exp (@regex) {
+        if (/^$exp/) {
+            push(@syms, $_);
+        }
+    }
+}
+
+close($file);
+
+my $i = 1;
+my $last = "none";
+@syms = sort(@syms);
+
+print("EXPORTS\n");
+foreach my $sym (@syms) {
+    # Ignore any duplicate entries
+    next if ($last eq $sym);
+
+    print("    $sym \@$i\n");
+    $last = $sym;
+    $i++;
+}
