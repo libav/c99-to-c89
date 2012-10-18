@@ -50,6 +50,25 @@ if ($?) {
    exit(1);
 }
 
+# Determine if we're building for x86 or x86_64 and
+# set the symbol prefix accordingly.
+my $prefix;
+my @machinedump = `dumpbin -headers $lib`;
+foreach(@machinedump) {
+    chomp;
+
+    next if !(s/^\s+.+\s+machine\s+\((...)\).*/$1/);
+    
+    if (/x86/) {
+        $prefix = "_";
+    } elsif (/x64/) {
+        $prefix = "";
+    } else {
+        print("Unknown machine type.\n");
+        exit(1);
+    }
+}
+
 open(my $file, "<", $vscript) || die("Cannot open $vscript");
 
 my $started = 0;
@@ -107,7 +126,7 @@ foreach(@dump) {
     next if !$started;
 
     # Only process lines with symbols
-    next if !(s/^\s+[0-9A-F]+\s+_//);
+    next if !(s/^\s+[0-9A-F]+\s+$prefix//);
 
     # Perl's chomp only handles whatever is in $/, so in an effort
     # to be portable, strip trailing newlines manually.
