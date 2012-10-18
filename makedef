@@ -46,7 +46,7 @@ my $objectstring = join(" ", @objects);
 
 `lib -out:$lib $objectstring`;
 if ($?) {
-   printf("Could not create temporary library.\n");
+   print("Could not create temporary library.\n");
    exit(1);
 }
 
