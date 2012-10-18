@@ -33,7 +33,7 @@ unless (-e $vscript) {
 }
 
 foreach my $object (@objects) {
-    unless(-e $object) {
+    unless (-e $object) {
         print("Object does not exist: $object\n");
         exit(0);
     }
@@ -88,7 +88,7 @@ if ($?) {
 }
 
 # Delete the temp lib, as we no longer need it.
-if(!unlink($lib)) {
+if (!unlink($lib)) {
     print("Could not delete temporary library.\n");
     exit(1);
 }
