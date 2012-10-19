@@ -119,7 +119,7 @@ foreach(@dump) {
     # Where to start and stop parsing
     if (/public symbols/) {
         $started = 1;
-    } elsif (/Summary/) {
+    } elsif (/^\s+Summary/) {
         $started = 0;
     }
 
