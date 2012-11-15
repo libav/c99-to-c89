@@ -63,6 +63,8 @@ foreach(@machinedump) {
         $prefix = "_";
     } elsif (/x64/) {
         $prefix = "";
+    } elsif (/ARM/) {
+        $prefix = "";
     } else {
         print("Unknown machine type.\n");
         exit(1);
