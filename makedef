@@ -145,7 +145,6 @@ foreach(@dump) {
 
 close($file);
 
-my $i = 1;
 my $last = "none";
 @syms = sort(@syms);
 
@@ -154,7 +153,6 @@ foreach my $sym (@syms) {
     # Ignore any duplicate entries
     next if ($last eq $sym);
 
-    print("    $sym \@$i\n");
+    print("    $sym\n");
     $last = $sym;
-    $i++;
 }
