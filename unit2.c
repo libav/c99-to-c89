@@ -13,6 +13,7 @@ enum PixelFormat {
     PIX_FMT_RGB24,
     PIX_FMT_RGBA,
     PIX_FMT_DUMMY,
+    PIX_FMT_DUMMY2,
     PIX_FMT_GRAY8,
     PIX_FMT_NB,
 };
@@ -37,12 +38,15 @@ static const struct PixFmtInfo pix_fmt_info[] = {
         .pixel_type  = PIXEL_PACKED,
         .is_alpha    = 1,
         .depth       = 32,
-    }, [PIX_FMT_RGB24] = {
+    },
+    { 1 },
+    [PIX_FMT_RGB24] = {
         .nb_channels = 3,
         .color_type  = COLOR_RGB,
         .pixel_type  = PIXEL_PACKED,
         .depth       = 24,
-    }, [PIX_FMT_YUVJ420P] = {
+    },
+    [PIX_FMT_YUVJ420P] = {
         .nb_channels = 3,
         .color_type  = COLOR_YUV_JPEG,
         .pixel_type  = PIXEL_PLANAR,
@@ -55,6 +59,7 @@ static const struct PixFmtInfo pix_fmt_info[] = {
     }, [PIX_FMT_GRAY8] = {
         .nb_channels = 1,
         .color_type  = COLOR_GRAY,
+                       42,
         .depth       = 8,
     }, [PIX_FMT_YUYV422] = {
         .nb_channels = 3,
@@ -62,6 +67,14 @@ static const struct PixFmtInfo pix_fmt_info[] = {
         .pixel_type  = PIXEL_PACKED,
         .depth       = 16,
     },
+    { 2 },
+};
+
+int mixed_array[] = {
+    [PIX_FMT_YUYV422] = 1,
+    2,
+    [PIX_FMT_RGBA] = 3,
+    4,
 };
 
 static const struct {
@@ -71,6 +84,8 @@ static const struct {
     .b = { .d = 1, },
 }, random_values3 = {
     0, { .d = 1, },
+}, random_values4 = {
+    .a = 1, { 2, 3 },
 };
 
 static const struct {
