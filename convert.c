@@ -952,8 +952,9 @@ static unsigned find_encompassing_struct_decl(unsigned start, unsigned end,
                 /* { <- parent
                  *   [..] = { .. }, <- us
                  * } */
-                assert(rec->parent->kind == CXCursor_UnexposedExpr &&
-                       rec->parent->parent->kind == CXCursor_InitListExpr);
+                assert((rec->parent->kind == CXCursor_UnexposedExpr &&
+                        rec->parent->parent->kind == CXCursor_InitListExpr) ||
+                       rec->parent->kind == CXCursor_InitListExpr);
 
                 *ptr = &struct_array_lists[n];
                 assert(struct_array_lists[n].array_depth > 0);
@@ -967,8 +968,9 @@ static unsigned find_encompassing_struct_decl(unsigned start, unsigned end,
                 unsigned m;
                 StructArrayList *l = *ptr = &struct_array_lists[n];
 
-                assert(rec->parent->kind == CXCursor_UnexposedExpr &&
-                       rec->parent->parent->kind == CXCursor_InitListExpr);
+                assert((rec->parent->kind == CXCursor_UnexposedExpr &&
+                        rec->parent->parent->kind == CXCursor_InitListExpr) ||
+                       rec->parent->kind == CXCursor_InitListExpr);
                 assert(l->array_depth == 0);
                 for (m = 0; m <= l->n_entries; m++) {
                     if (start >= l->entries[m].expression_offset.start &&
