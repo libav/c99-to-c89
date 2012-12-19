@@ -1233,6 +1233,17 @@ static char *find_variable_name(CursorRecursion *rec)
     abort();
 }
 
+static int index_is_unique(StructArrayList *l, int idx) {
+  int n;
+
+  for (n = 0; n < l->n_entries; n++) {
+    if (l->entries[n].index == idx)
+      return 0;
+  }
+
+  return 1;
+}
+
 static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
                                         CXClientData client_data)
 {
@@ -1492,7 +1503,9 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
                     sai->value_offset.end   = e;
                     sai->expression_offset.start = s;
                     sai->expression_offset.end   = e;
-                    sai->index = rec.parent->child_cntr - 1;
+                    sai->index = parent->n_entries > 0 ?
+                                 parent->entries[parent->n_entries - 1].index + 1 :
+                                 rec.parent->child_cntr - 1;
                     parent_idx = parent - struct_array_lists;
                 }
             }
@@ -1580,6 +1593,8 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
             sai->value_offset.end   = get_token_offset(tokens[n_tokens - 2]);
             rec.data.sal_idx = rec.parent->data.sal_idx;
             clang_visitChildren(cursor, callback, &rec);
+            assert(index_is_unique(&struct_array_lists[rec.parent->data.sal_idx],
+                                   sai->index));
             struct_array_lists[rec.parent->data.sal_idx].n_entries++;
             clang_disposeString(spelling);
             clang_disposeString(spelling2);
@@ -1681,7 +1696,10 @@ static enum CXChildVisitResult callback(CXCursor cursor, CXCursor parent,
             sai->value_offset.end   = s;
             sai->expression_offset.start = s;
             sai->expression_offset.end   = s;
-            sai->index = rec.parent->child_cntr - 1;
+            sai->index = parent->n_entries > 0 ?
+                         parent->entries[parent->n_entries - 1].index + 1 :
+                         rec.parent->child_cntr - 1;
+            assert(index_is_unique(parent, sai->index));
             parent->n_entries++;
         }
     }
