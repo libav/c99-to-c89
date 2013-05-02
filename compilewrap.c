@@ -101,7 +101,8 @@ int main(int argc, char *argv[])
     int msvc = 0, keep = 0, flag_compile = 0;
     char *cmdline;
     char *ptr;
-    char temp_file_1[200], temp_file_2[200], arg_buffer[200], fo_buffer[200];
+    char temp_file_1[200], temp_file_2[200], arg_buffer[200], fo_buffer[200],
+         fi_buffer[200];
     char **cpp_argv, **cc_argv, **pass_argv;
     const char *source_file = NULL;
     const char *outname = NULL;
@@ -143,7 +144,7 @@ int main(int argc, char *argv[])
             }
         }
         if (!strncmp(argv[i], "-Fo", 3) || !strncmp(argv[i], "-Fi", 3) || !strncmp(argv[i], "-Fe", 3) ||
-            !strcmp(argv[i], "-out") || !strcmp(argv[i], "-o")) {
+            !strcmp(argv[i], "-out") || !strcmp(argv[i], "-o") || !strcmp(argv[i], "-FI")) {
 
             // Copy the output filename only to cc
             if ((!strcmp(argv[i], "-Fo") || !strcmp(argv[i], "-out") || !strcmp(argv[i], "-Fi") ||
@@ -160,6 +161,15 @@ int main(int argc, char *argv[])
 
                 cc_argv[cc_argc++]     = fo_buffer;
                 pass_argv[pass_argc++] = fo_buffer;
+
+                i += 2;
+            } else if (!strcmp(argv[i], "-FI") && i + 1 < argc) {
+                /* Support the nonstandard syntax -FI filename, to get around
+                 * msys file name mangling issues. */
+                sprintf(fi_buffer, "%s%s", argv[i], argv[i + 1]);
+
+                cpp_argv[cpp_argc++]   = fi_buffer;
+                pass_argv[pass_argc++] = fi_buffer;
 
                 i += 2;
             } else if (!strncmp(argv[i], "-Fo", 3) || !strncmp(argv[i], "-Fi", 3) || !strncmp(argv[i], "-Fe", 3)) {
