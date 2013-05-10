@@ -98,7 +98,7 @@ int main(int argc, char *argv[])
     int cpp_argc, cc_argc, pass_argc;
     int exit_code;
     int input_source = 0, input_obj = 0;
-    int msvc = 0, keep = 0, flag_compile = 0;
+    int msvc = 0, keep = 0, noconv = 0, flag_compile = 0;
     char *cmdline;
     char *ptr;
     char temp_file_1[200], temp_file_2[200], arg_buffer[200], fo_buffer[200],
@@ -108,15 +108,26 @@ int main(int argc, char *argv[])
     const char *outname = NULL;
     const char *convert_options = "";
 
-    if (i < argc && !strcmp(argv[i], "-keep")) {
-        keep = 1;
-        i++;
+    for (; i <= argc; i++) {
+        if (!strcmp(argv[i], "-keep")) {
+            keep = 1;
+        } else if (!strcmp(argv[i], "-noconv")) {
+            noconv = 1;
+        } else
+            break;
+    }
+
+    if (keep && noconv) {
+        fprintf(stderr, "Using -keep with -noconv doesn't make any sense!\n "
+                        "You cannot keep intermediate files that doesn't exist.\n");
+        return 1;
     }
 
     if (i < argc && !strncmp(argv[i], "cl", 2) && (argv[i][2] == '.' || argv[i][2] == '\0')) {
         msvc = 1;
         convert_options = "-ms";
-    }
+    } else if (i < argc && !strncmp(argv[i], "icl", 3) && (argv[i][3] == '.' || argv[i][3] == '\0'))
+        msvc = 1; /* for command line compatibility */
 
     sprintf(temp_file_1, "preprocessed_%d.c", getpid());
     sprintf(temp_file_2, "converted_%d.c", getpid());
@@ -215,7 +226,8 @@ int main(int argc, char *argv[])
             else
                 cpp_argv[cpp_argc++] = "-E";
 
-            flag_compile = 1;
+            if (!noconv)
+                flag_compile = 1;
         } else if (ext_inputfile) {
             // Input filename, pass to cpp only, set the temp file input to cc
             pass_argv[pass_argc++] = argv[i];
