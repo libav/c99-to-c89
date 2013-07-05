@@ -1,6 +1,6 @@
-#!/usr/bin/env perl
+#!/bin/sh
 
-# Copyright (c) 2012, Derek Buitenhuis
+# Copyright (c) 2013, Derek Buitenhuis
 #
 # Permission to use, copy, modify, and/or distribute this software for any
 # purpose with or without fee is hereby granted, provided that the above
@@ -14,145 +14,116 @@
 # ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 # OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
-use strict;
-use warnings;
-
-use File::Temp;
-
-# Handle Arguments
-my ($vscript, @objects) = @ARGV;
-
-unless (defined($vscript) && @objects) {
-    print("Usage: makedef <version_script> <objects>\n");
-    exit(0);
+# mktemp isn't POSIX, so supply an implementation
+mktemp() {
+    echo "${2%%XXX*}.${HOSTNAME}.${UID}.$$"
 }
 
-unless (-e $vscript) {
-    print("Version script does not exist\n");
-    exit(0);
-}
+if [ $# -lt 2 ]; then
+    echo "Usage: makedef <version_script> <objects>" >&2
+    exit 0
+fi
 
-foreach my $object (@objects) {
-    unless (-e $object) {
-        print("Object does not exist: $object\n");
-        exit(0);
-    }
-}
+vscript=$1
+shift
+
+if [ ! -f "$vscript" ]; then
+    echo "Version script does not exist" >&2
+    exit 1
+fi
+
+for object in "$@"; do
+    if [ ! -f "$object" ]; then
+        echo "Object does not exist: ${object}" >&2
+        exit 1
+    fi
+done
 
 # Create a lib temporarily to dump symbols from.
-# It's just much easier to do it this way.
-my $lib = mktemp("library.XXXXXXXX").".lib";
-my $objectstring = join(" ", @objects);
+# It's just much easier to do it this way
+libname=$(mktemp -u "library").lib
 
-`lib -out:$lib $objectstring`;
-if ($?) {
-   print("Could not create temporary library.\n");
-   exit(1);
-}
+lib -out:${libname} $@ >/dev/null
+if [ $? != 0 ]; then
+    echo "Could not create temporary library." >&2
+    exit 1
+fi
+
+IFS='
+'
 
 # Determine if we're building for x86 or x86_64 and
 # set the symbol prefix accordingly.
-my $prefix;
-my @machinedump = `dumpbin -headers $lib`;
-foreach(@machinedump) {
-    chomp;
+prefix=""
+arch=$(dumpbin -headers ${libname} |
+       grep '^[ \t]\+.\+machine[ \t]\+(.\+)' |
+       head -1 |
+       sed -e 's/^ \{1,\}.\{1,\} \{1,\}machine \{1,\}(\(...\)).*/\1/')
 
-    next if !(s/^\s+.+\s+machine\s+\((...)\).*/$1/);
-    
-    if (/x86/) {
-        $prefix = "_";
-    } elsif (/x64/) {
-        $prefix = "";
-    } elsif (/ARM/) {
-        $prefix = "";
-    } else {
-        print("Unknown machine type.\n");
-        exit(1);
-    }
-}
+if [ "${arch}" = "x86" ]; then
+    prefix="_"
+else
+    if [ "${arch}" != "ARM" ] && [ "${arch}" != "x64" ]; then
+        echo "Unknown machine type." >&2
+        exit 1
+    fi
+fi
 
-open(my $file, "<", $vscript) || die("Cannot open $vscript");
+started=0
+regex="none"
 
-my $started = 0;
-my @regex;
-
-while(<$file>) {
-    chomp;
-
+for line in $(cat ${vscript}); do
     # We only care about global symbols
-    if (s/^\s+global://) {
-        $started = 1;
-    } elsif (/^\s+local:/) {
-        $started = 0;
-    }
+    echo "${line}" | grep -q '^[ \t]\+global:'
+    if [ $? = 0 ]; then
+        started=1
+        line=$(echo "${line}" | sed -e 's/^ \{1,\}global: *//')
+    else
+        echo "${line}" | grep -q '^[ \t]\+local:'
+        if [ $? = 0 ]; then
+            started=0
+        fi
+    fi
 
-    next if !$started;
+    if [ ${started} = 0 ]; then
+        continue
+    fi
 
     # Handle multiple symbols on one line
-    my @delim = split(/;/);
-    foreach my $exp (@delim) {
+    IFS=';'
+
+    # Work around stupid expansion to filenames
+    line=$(echo "${line}" | sed -e 's/\*/.\\+/g')
+    for exp in ${line}; do
         # Remove leading and trailing whitespace
-        $exp =~ s/^\s*|\s*$//;
-        # Convert asterisks into its PCRE-friendly equivalent
-        $exp =~ s/\*/.+/;
+        exp=$(echo "${exp}" | sed -e 's/^ *//' -e 's/ *$//')
 
-        push(@regex, $exp);
-    }
-}
+        if [ "${regex}" = "none" ]; then
+            regex="${exp}"
+        else
+            regex="${regex};${exp}"
+        fi
+    done
 
-close($file);
+    IFS=$'
+'
+done
 
-my @dump = `dumpbin -linkermember:1 $lib`;
-if ($?) {
-    print("Execution of dumpbin failed.\n");
-    exit(1);
-}
+dump=$(dumpbin -linkermember:1 ${libname})
 
-# Delete the temp lib, as we no longer need it.
-if (!unlink($lib)) {
-    print("Could not delete temporary library.\n");
-    exit(1);
-}
+rm ${libname}
 
-my @syms;
-$started = 0;
+IFS=';'
+list=""
+for exp in ${regex}; do
+    list="${list}"'
+'$(echo "${dump}" |
+          sed -e '/public symbols/,$!d' -e '/^ \{1,\}Summary/,$d' -e "s/ \{1,\}${prefix}/ /" -e 's/ \{1,\}/ /g' |
+          tail -n +2 |
+          cut -d' ' -f3 |
+          grep "^${exp}" |
+          sed -e 's/^/    /')
+done
 
-foreach(@dump) {
-    # Where to start and stop parsing
-    if (/public symbols/) {
-        $started = 1;
-    } elsif (/^\s+Summary/) {
-        $started = 0;
-    }
-
-    next if !$started;
-
-    # Only process lines with symbols
-    next if !(s/^\s+[0-9A-F]+\s+$prefix//);
-
-    # Perl's chomp only handles whatever is in $/, so in an effort
-    # to be portable, strip trailing newlines manually.
-    s/\r?\n$//;
-
-    # It doesn't matter if we push duplicates here, since we make
-    # the array unique later on.
-    foreach my $exp (@regex) {
-        if (/^$exp/) {
-            push(@syms, $_);
-        }
-    }
-}
-
-close($file);
-
-my $last = "none";
-@syms = sort(@syms);
-
-print("EXPORTS\n");
-foreach my $sym (@syms) {
-    # Ignore any duplicate entries
-    next if ($last eq $sym);
-
-    print("    $sym\n");
-    $last = $sym;
-}
+echo "EXPORTS"
+echo "${list}" | sort | uniq | tail -n +2
