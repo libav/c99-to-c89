@@ -1732,7 +1732,7 @@ static double eval_prim(CXToken *tokens, unsigned *n, unsigned last)
         (*n)++;
         clang_disposeString(s);
         d = eval_expr(tokens, n, last);
-        if (*n >= last) {
+        if (*n > last) {
             fprintf(stderr, "No right parenthesis found\n");
             exit(1);
         }
