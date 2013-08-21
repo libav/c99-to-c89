@@ -24,6 +24,10 @@
 #include <stdlib.h>
 #include <inttypes.h>
 
+#ifdef _MSC_VER
+#define strtoll _strtoi64
+#endif
+
 /*
  * The basic idea of the token parser is to "stack" ordered tokens
  * (i.e. ordering is done by libclang) in such a way that we can
@@ -1749,9 +1753,11 @@ static double eval_prim(CXToken *tokens, unsigned *n, unsigned last)
     } else {
         char *end;
         double d;
-        if (str[0] == '0' && (str[1] == 'x' || str[1] == 'X') && str[2])
-            str += 2;
-        d = strtod(str, &end);
+        if (str[0] == '0' && (str[1] == 'x' || str[1] == 'X')) {
+            d = strtoll(str, &end, 16);
+        } else {
+            d = strtod(str, &end);
+        }
         // Handle a possible f suffix for float constants
         if (end != str && (*end == 'f' || *end == 'F'))
             end++;
