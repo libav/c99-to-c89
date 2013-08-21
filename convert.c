@@ -1748,7 +1748,10 @@ static double eval_prim(CXToken *tokens, unsigned *n, unsigned last)
         return d;
     } else {
         char *end;
-        double d = strtod(str, &end);
+        double d;
+        if (str[0] == '0' && (str[1] == 'x' || str[1] == 'X') && str[2])
+            str += 2;
+        d = strtod(str, &end);
         // Handle a possible f suffix for float constants
         if (end != str && (*end == 'f' || *end == 'F'))
             end++;
