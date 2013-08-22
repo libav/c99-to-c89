@@ -1735,6 +1735,27 @@ static double eval_prim(CXToken *tokens, unsigned *n, unsigned last)
         double d;
         (*n)++;
         clang_disposeString(s);
+        if (*n + 1 <= last) {
+            CXString s2;
+            const char *str2;
+            s = clang_getTokenSpelling(TU, tokens[*n]);
+            str = clang_getCString(s);
+            s2 = clang_getTokenSpelling(TU, tokens[*n + 1]);
+            str2 = clang_getCString(s2);
+            // This should ideally recognize all built-in types
+            // and also check the type name against all typedefs
+            // (it also doesn't support two word typnames such as structs.
+            // This is enough for handling double casts in DBL_MAX in
+            // certain glibc versions though.
+            if (!strcmp(str2, ")") && !strcmp(str, "double")) {
+                clang_disposeString(s);
+                clang_disposeString(s2);
+                (*n) += 2;
+                return eval_prim(tokens, n, last);
+            }
+            clang_disposeString(s);
+            clang_disposeString(s2);
+        }
         d = eval_expr(tokens, n, last);
         if (*n > last) {
             fprintf(stderr, "No right parenthesis found\n");
