@@ -108,7 +108,7 @@ int main(int argc, char *argv[])
     const char *outname = NULL;
     const char *convert_options = "";
 
-    for (; i <= argc; i++) {
+    for (; i < argc; i++) {
         if (!strcmp(argv[i], "-keep")) {
             keep = 1;
         } else if (!strcmp(argv[i], "-noconv")) {
