@@ -56,7 +56,8 @@ IFS='
 # set the symbol prefix accordingly.
 prefix=""
 arch=$(dumpbin -headers ${libname} |
-       grep '^[ \t]\+.\+machine[ \t]\+(.\+)' |
+       tr '\t' ' ' |
+       grep '^ \+.\+machine \+(.\+)' |
        head -1 |
        sed -e 's/^ \{1,\}.\{1,\} \{1,\}machine \{1,\}(\(...\)).*/\1/')
 
@@ -72,14 +73,14 @@ fi
 started=0
 regex="none"
 
-for line in $(cat ${vscript}); do
+for line in $(cat ${vscript} | tr '\t' ' '); do
     # We only care about global symbols
-    echo "${line}" | grep -q '^[ \t]\+global:'
+    echo "${line}" | grep -q '^ \+global:'
     if [ $? = 0 ]; then
         started=1
         line=$(echo "${line}" | sed -e 's/^ \{1,\}global: *//')
     else
-        echo "${line}" | grep -q '^[ \t]\+local:'
+        echo "${line}" | grep -q '^ \+local:'
         if [ $? = 0 ]; then
             started=0
         fi
