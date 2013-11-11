@@ -28,34 +28,6 @@
 
 #define CONVERTER "c99conv"
 
-/* On Windows, system() has very frugal length limits */
-#ifdef _WIN32
-static int w32createprocess(char *cmdline)
-{
-    STARTUPINFO si = { 0 };
-    PROCESS_INFORMATION pi = { 0 };
-    DWORD exit_code;
-
-    if (CreateProcess(NULL, cmdline, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
-
-        WaitForSingleObject(pi.hProcess, INFINITE);
-
-        if (!GetExitCodeProcess(pi.hProcess, &exit_code))
-            exit_code = -1;
-
-        CloseHandle(pi.hProcess);
-        CloseHandle(pi.hThread);
-
-        return exit_code;
-    } else {
-        return -1;
-    }
-}
-#define exec_cmdline w32createprocess
-#else
-#define exec_cmdline system
-#endif
-
 static char* create_cmdline(char **argv)
 {
     int i;
@@ -91,6 +63,34 @@ static char* create_cmdline(char **argv)
 
     return out;
 }
+
+/* On Windows, system() has very frugal length limits */
+#ifdef _WIN32
+static int w32createprocess(const char *cmdline)
+{
+    STARTUPINFO si = { 0 };
+    PROCESS_INFORMATION pi = { 0 };
+    DWORD exit_code;
+
+    if (CreateProcess(NULL, cmdline, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
+
+        WaitForSingleObject(pi.hProcess, INFINITE);
+
+        if (!GetExitCodeProcess(pi.hProcess, &exit_code))
+            exit_code = -1;
+
+        CloseHandle(pi.hProcess);
+        CloseHandle(pi.hThread);
+
+        return exit_code;
+    } else {
+        return -1;
+    }
+}
+#define exec_cmdline w32createprocess
+#else
+#define exec_cmdline system
+#endif
 
 int main(int argc, char *argv[])
 {
