@@ -66,13 +66,42 @@ static char* create_cmdline(char **argv)
 
 /* On Windows, system() has very frugal length limits */
 #ifdef _WIN32
-static int w32createprocess(const char *cmdline)
+static int exec_argv_out(char **argv, const char *out)
 {
     STARTUPINFO si = { 0 };
     PROCESS_INFORMATION pi = { 0 };
     DWORD exit_code;
+    char *cmdline = create_cmdline(argv);
+    FILE *fp = NULL;
+    HANDLE pipe_read, pipe_write = NULL;
+    BOOL inherit = FALSE;
 
-    if (CreateProcess(NULL, cmdline, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
+    if (out) {
+        SECURITY_ATTRIBUTES sa = { 0 };
+        fp = fopen(out, "wb");
+        if (!fp) {
+            perror(out);
+            return 1;
+        }
+        sa.nLength = sizeof(sa);
+        sa.bInheritHandle = TRUE;
+        CreatePipe(&pipe_read, &pipe_write, &sa, 0);
+        si.cb = sizeof(si);
+        si.dwFlags = STARTF_USESTDHANDLES;
+        si.hStdOutput = pipe_write;
+        inherit = TRUE;
+    }
+    if (CreateProcess(NULL, cmdline, NULL, NULL, inherit, 0, NULL, NULL, &si, &pi)) {
+        free(cmdline);
+        if (out) {
+            char buf[8192];
+            DWORD n;
+            CloseHandle(pipe_write);
+            while (ReadFile(pipe_read, buf, sizeof(buf), &n, NULL))
+                fwrite(buf, 1, n, fp);
+            CloseHandle(pipe_read);
+            fclose(fp);
+        }
 
         WaitForSingleObject(pi.hProcess, INFINITE);
 
@@ -84,12 +113,56 @@ static int w32createprocess(const char *cmdline)
 
         return exit_code;
     } else {
+        if (out) {
+            fclose(fp);
+            CloseHandle(pipe_read);
+            CloseHandle(pipe_write);
+        }
+        free(cmdline);
         return -1;
     }
 }
-#define exec_cmdline w32createprocess
 #else
-#define exec_cmdline system
+static int exec_argv_out(char **argv, const char *out)
+{
+    int fds[2];
+    pid_t pid;
+    int ret = 0;
+    FILE *fp;
+    if (!out) {
+        char *cmdline = create_cmdline(argv);
+        ret = system(cmdline);
+        free(cmdline);
+        return ret;
+    }
+    fp = fopen(out, "wb");
+    if (!fp) {
+        perror(out);
+        return 1;
+    }
+
+    pipe(fds);
+    if (!(pid = fork())) {
+        close(fds[0]);
+        dup2(fds[1], STDOUT_FILENO);
+        if (execvp(argv[0], argv)) {
+            perror("execvp");
+            exit(1);
+        }
+    }
+    close(fds[1]);
+    while (1) {
+        char buf[8192];
+        int n = read(fds[0], buf, sizeof(buf));
+        if (n <= 0)
+            break;
+        fwrite(buf, 1, n, fp);
+    }
+    close(fds[0]);
+    fclose(fp);
+    waitpid(pid, &ret, 0);
+    return WEXITSTATUS(ret);
+}
 #endif
 
 int main(int argc, char *argv[])
@@ -99,9 +172,8 @@ int main(int argc, char *argv[])
     int exit_code;
     int input_source = 0, input_obj = 0;
     int msvc = 0, keep = 0, noconv = 0, flag_compile = 0;
-    char *cmdline;
     char *ptr;
-    char temp_file_1[200], temp_file_2[200], arg_buffer[200], fo_buffer[200],
+    char temp_file_1[200], temp_file_2[200], fo_buffer[200],
          fi_buffer[200];
     char **cpp_argv, **cc_argv, **pass_argv;
     char *conv_argv[5], *conv_tool;
@@ -223,22 +295,12 @@ int main(int argc, char *argv[])
             sprintf(temp_file_1, "%s_preprocessed.c", outname);
             sprintf(temp_file_2, "%s_converted.c", outname);
 
-            if (msvc) {
-                sprintf(arg_buffer, "-Fi%s", temp_file_1);
-                cpp_argv[cpp_argc++] = arg_buffer;
-            } else {
-                cpp_argv[cpp_argc++] = "-o";
-                cpp_argv[cpp_argc++] = temp_file_1;
-            }
         } else if (!strcmp(argv[i], "-c")) {
             // Copy the compile flag only to cc, set the preprocess flag for cpp
             pass_argv[pass_argc++] = argv[i];
             cc_argv[cc_argc++]     = argv[i++];
 
-            if (msvc)
-                cpp_argv[cpp_argc++] = "-P";
-            else
-                cpp_argv[cpp_argc++] = "-E";
+            cpp_argv[cpp_argc++] = "-E";
 
             if (!noconv)
                 flag_compile = 1;
@@ -280,14 +342,12 @@ int main(int argc, char *argv[])
 
     if (!flag_compile || !source_file || !outname) {
         /* Doesn't seem like we should be invoked, just call the parameters as such */
-        cmdline   = create_cmdline(pass_argv);
-        exit_code = exec_cmdline(cmdline);
+        exit_code = exec_argv_out(pass_argv, NULL);
 
         goto exit;
     }
 
-    cmdline   = create_cmdline(cpp_argv);
-    exit_code = exec_cmdline(cmdline);
+    exit_code = exec_argv_out(cpp_argv, temp_file_1);
     if (exit_code) {
         if (!keep)
             unlink(temp_file_1);
@@ -295,16 +355,13 @@ int main(int argc, char *argv[])
         goto exit;
     }
 
-    free(cmdline);
-
     conv_argv[0] = conv_tool;
     conv_argv[1] = convert_options;
     conv_argv[2] = temp_file_1;
     conv_argv[3] = temp_file_2;
     conv_argv[4] = NULL;
 
-    cmdline   = create_cmdline(conv_argv);
-    exit_code = exec_cmdline(cmdline);
+    exit_code = exec_argv_out(conv_argv, NULL);
     if (exit_code) {
         if (!keep) {
             unlink(temp_file_1);
@@ -314,19 +371,15 @@ int main(int argc, char *argv[])
         goto exit;
     }
 
-    free(cmdline);
-
     if (!keep)
         unlink(temp_file_1);
 
-    cmdline   = create_cmdline(cc_argv);
-    exit_code = exec_cmdline(cmdline);
+    exit_code = exec_argv_out(cc_argv, NULL);
 
     if (!keep)
         unlink(temp_file_2);
 
 exit:
-    free(cmdline);
     free(cc_argv);
     free(cpp_argv);
     free(pass_argv);
