@@ -104,9 +104,23 @@ int main(int argc, char *argv[])
     char temp_file_1[200], temp_file_2[200], arg_buffer[200], fo_buffer[200],
          fi_buffer[200];
     char **cpp_argv, **cc_argv, **pass_argv;
+    char *conv_argv[5], *conv_tool;
     const char *source_file = NULL;
     const char *outname = NULL;
-    const char *convert_options = "";
+    char convert_options[20] = "";
+
+    conv_tool = malloc(strlen(argv[0]) + strlen(CONVERTER) + 1);
+    strcpy(conv_tool, argv[0]);
+
+    ptr = strrchr(conv_tool, '\\');
+    if (!ptr)
+        ptr = strrchr(conv_tool, '/');
+
+    if (!ptr)
+        conv_tool[0] = '\0';
+    else
+        ptr[1] = '\0';
+    strcat(conv_tool, CONVERTER);
 
     for (; i < argc; i++) {
         if (!strcmp(argv[i], "-keep")) {
@@ -125,7 +139,7 @@ int main(int argc, char *argv[])
 
     if (i < argc && !strncmp(argv[i], "cl", 2) && (argv[i][2] == '.' || argv[i][2] == '\0')) {
         msvc = 1;
-        convert_options = "-ms";
+        strcpy(convert_options, "-ms");
     } else if (i < argc && !strncmp(argv[i], "icl", 3) && (argv[i][3] == '.' || argv[i][3] == '\0'))
         msvc = 1; /* for command line compatibility */
 
@@ -283,22 +297,13 @@ int main(int argc, char *argv[])
 
     free(cmdline);
 
-    cmdline = malloc(strlen(argv[0]) + strlen(temp_file_1) + strlen(temp_file_2) + strlen(CONVERTER) + 20);
-    strcpy(cmdline, argv[0]);
+    conv_argv[0] = conv_tool;
+    conv_argv[1] = convert_options;
+    conv_argv[2] = temp_file_1;
+    conv_argv[3] = temp_file_2;
+    conv_argv[4] = NULL;
 
-    ptr = strrchr(argv[0], '\\');
-
-    if (!ptr)
-        ptr = strrchr(argv[0], '/');
-
-    if (!ptr)
-        ptr = cmdline;
-    else
-        ptr = cmdline + (ptr + 1 - argv[0]);
-
-    sprintf(ptr, "%s %s %s %s", CONVERTER, convert_options, temp_file_1,
-                                temp_file_2);
-
+    cmdline   = create_cmdline(conv_argv);
     exit_code = exec_cmdline(cmdline);
     if (exit_code) {
         if (!keep) {
@@ -325,6 +330,7 @@ exit:
     free(cc_argv);
     free(cpp_argv);
     free(pass_argv);
+    free(conv_tool);
 
     return exit_code ? 1 : 0;
 }
