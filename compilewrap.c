@@ -24,6 +24,7 @@
 #define getpid GetCurrentProcessId
 #else
 #include <unistd.h>
+#include <sys/wait.h>
 #endif
 
 #define CONVERTER "c99conv"
