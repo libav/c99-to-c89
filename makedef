@@ -106,7 +106,7 @@ for line in $(cat ${vscript} | tr '\t' ' '); do
         fi
     done
 
-    IFS=$'
+    IFS='
 '
 done
 
