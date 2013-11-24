@@ -43,6 +43,8 @@ done
 # It's just much easier to do it this way
 libname=$(mktemp -u "library").lib
 
+trap 'rm -f -- $libname' EXIT
+
 lib -out:${libname} $@ >/dev/null
 if [ $? != 0 ]; then
     echo "Could not create temporary library." >&2
