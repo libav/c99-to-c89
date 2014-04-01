@@ -1238,7 +1238,7 @@ static char *find_variable_name(CursorRecursion *rec)
 }
 
 static int index_is_unique(StructArrayList *l, int idx) {
-  int n;
+  unsigned n;
 
   for (n = 0; n < l->n_entries; n++) {
     if (l->entries[n].index == idx)
@@ -2026,7 +2026,7 @@ static void replace_comp_literal(CompoundLiteralList *l,
         (*clidx)++;
     } else if (l->type == TYPE_TEMP_ASSIGN) {
         if (l->context.start < l->cast_token.start) {
-            unsigned n, idx1, idx2, off;
+            unsigned off;
             char tmp[256];
 
             // open a new context, so we can declare a new variable
@@ -2092,7 +2092,7 @@ static void replace_comp_literal(CompoundLiteralList *l,
         }
     } else if (l->type == TYPE_CONST_DECL) {
         if (l->context.start < l->cast_token.start) {
-            unsigned idx1, idx2, n, off;
+            unsigned off;
             char tmp[256];
 
             // declare static const variable
@@ -2401,7 +2401,7 @@ static void print_token_wrapper(CXToken *tokens, unsigned n_tokens,
     }
 
     while (*esidx < n_end_scopes && off >= end_scopes[*esidx].end - 1) {
-        unsigned i;
+        int i;
         for (i = 0; i < end_scopes[*esidx].n_scopes; i++)
             print_literal_text("}", lnum, cpos);
         (*cpos) -= end_scopes[*esidx].n_scopes;
