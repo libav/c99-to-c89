@@ -2143,8 +2143,8 @@ static void replace_comp_literal(CompoundLiteralList *l,
             // remove variable declaration/init, remove ',' if present
             l->context.start = l->context.end;
             l->type = TYPE_TEMP_ASSIGN;
-            reorder_compound_literal_list(l - comp_literal_lists);
             (*_n)--;
+            reorder_compound_literal_list(l - comp_literal_lists);
             do {
                 (*_n)++;
                 get_token_position(tokens[*_n], lnum, cpos, &off);
