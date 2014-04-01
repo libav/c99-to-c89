@@ -2061,6 +2061,28 @@ static void replace_comp_literal(CompoundLiteralList *l,
         } else {
             print_token(tokens[*_n], lnum, cpos);
 
+            {
+                // Bugfix. Consider preprocessor directives, don't insert closing }
+                // at the end of the line if it doesn't end with ";" or "}".
+                unsigned tok_lnum = *lnum;
+                unsigned tok_pos = *cpos;
+                unsigned off;
+                get_token_position(tokens[*_n + 1], &tok_lnum, &tok_pos, &off);
+                if (tok_lnum > *lnum)
+                {
+                    // Get previous token spelling.
+                    CXString s = clang_getTokenSpelling(TU, tokens[*_n]);
+                    const char * spelling = clang_getCString(s);
+                    if (strcmp(spelling, ";") && strcmp(spelling, "}"))
+                    {
+                        print_literal_text("\n", lnum, cpos);
+                        (*lnum)++;
+                        *cpos = 0;
+                    }
+                    clang_disposeString(s);
+                }
+            }
+
             // multiple contexts may want to close here - close all at once
             do {
                 print_literal_text(" }", lnum, cpos);
