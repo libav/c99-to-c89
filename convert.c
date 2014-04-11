@@ -1238,7 +1238,7 @@ static char *find_variable_name(CursorRecursion *rec)
 }
 
 static int index_is_unique(StructArrayList *l, int idx) {
-  int n;
+  unsigned n;
 
   for (n = 0; n < l->n_entries; n++) {
     if (l->entries[n].index == idx)
@@ -2026,7 +2026,7 @@ static void replace_comp_literal(CompoundLiteralList *l,
         (*clidx)++;
     } else if (l->type == TYPE_TEMP_ASSIGN) {
         if (l->context.start < l->cast_token.start) {
-            unsigned n, idx1, idx2, off;
+            unsigned off;
             char tmp[256];
 
             // open a new context, so we can declare a new variable
@@ -2061,6 +2061,28 @@ static void replace_comp_literal(CompoundLiteralList *l,
         } else {
             print_token(tokens[*_n], lnum, cpos);
 
+            {
+                // Bugfix. Consider preprocessor directives, don't insert closing }
+                // at the end of the line if it doesn't end with ";" or "}".
+                unsigned tok_lnum = *lnum;
+                unsigned tok_pos = *cpos;
+                unsigned off;
+                get_token_position(tokens[*_n + 1], &tok_lnum, &tok_pos, &off);
+                if (tok_lnum > *lnum)
+                {
+                    // Get previous token spelling.
+                    CXString s = clang_getTokenSpelling(TU, tokens[*_n]);
+                    const char * spelling = clang_getCString(s);
+                    if (strcmp(spelling, ";") && strcmp(spelling, "}"))
+                    {
+                        print_literal_text("\n", lnum, cpos);
+                        (*lnum)++;
+                        *cpos = 0;
+                    }
+                    clang_disposeString(s);
+                }
+            }
+
             // multiple contexts may want to close here - close all at once
             do {
                 print_literal_text(" }", lnum, cpos);
@@ -2070,7 +2092,7 @@ static void replace_comp_literal(CompoundLiteralList *l,
         }
     } else if (l->type == TYPE_CONST_DECL) {
         if (l->context.start < l->cast_token.start) {
-            unsigned idx1, idx2, n, off;
+            unsigned off;
             char tmp[256];
 
             // declare static const variable
@@ -2143,12 +2165,12 @@ static void replace_comp_literal(CompoundLiteralList *l,
             // remove variable declaration/init, remove ',' if present
             l->context.start = l->context.end;
             l->type = TYPE_TEMP_ASSIGN;
-            reorder_compound_literal_list(l - comp_literal_lists);
             (*_n)--;
             do {
                 (*_n)++;
                 get_token_position(tokens[*_n], lnum, cpos, &off);
             } while (off < l->cast_token.end);
+            reorder_compound_literal_list(l - comp_literal_lists);
         }
     }
 }
@@ -2379,7 +2401,7 @@ static void print_token_wrapper(CXToken *tokens, unsigned n_tokens,
     }
 
     while (*esidx < n_end_scopes && off >= end_scopes[*esidx].end - 1) {
-        unsigned i;
+        int i;
         for (i = 0; i < end_scopes[*esidx].n_scopes; i++)
             print_literal_text("}", lnum, cpos);
         (*cpos) -= end_scopes[*esidx].n_scopes;
