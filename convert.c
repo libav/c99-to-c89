@@ -2488,7 +2488,7 @@ static void cleanup(void)
                         typedefs[n].struct_decl_idx);
             }
         } else if (typedefs[n].enum_decl_idx != (unsigned) -1) {
-            if (structs[typedefs[n].enum_decl_idx].name[0]) {
+            if (enums[typedefs[n].enum_decl_idx].name[0]) {
                 dprintf("[%d]: %s (enum %s = %d)\n",
                         n, typedefs[n].name,
                         enums[typedefs[n].enum_decl_idx].name,
