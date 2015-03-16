@@ -560,7 +560,9 @@ static enum CXChildVisitResult fill_enum_value(CXCursor cursor,
         tsp = clang_getTokenSpelling(TU, tokens[0]);
         str = clang_getCString(tsp);
         cache->n[++cache->n[0]] = strtol(str, &end, 0);
-        assert(end - str == strlen(str));
+        assert(end - str == strlen(str) ||
+               (end - str == strlen(str) - 1 && // str may have a suffix like 'U' that strtol doesn't consume
+                (*end == 'U' || *end == 'u')));
         clang_disposeString(tsp);
         break;
     }
