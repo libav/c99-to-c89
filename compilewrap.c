@@ -90,6 +90,7 @@ static int exec_argv_out(char **argv, const char *out)
         si.cb = sizeof(si);
         si.dwFlags = STARTF_USESTDHANDLES;
         si.hStdOutput = pipe_write;
+        si.hStdError = GetStdHandle(STD_ERROR_HANDLE);
         inherit = TRUE;
     }
     if (CreateProcess(NULL, cmdline, NULL, NULL, inherit, 0, NULL, NULL, &si, &pi)) {
