@@ -313,6 +313,11 @@ int main(int argc, char *argv[])
             cc_argv[cc_argc++]     = temp_file_2;
         } else if (!strcmp(argv[i], "-MMD") || !strncmp(argv[i], "-D", 2)) {
             // Preprocessor-only parameter
+            if (!strcmp(argv[i], "-D"))
+            {   // Handle -D DEFINE style
+                pass_argv[pass_argc++] = argv[i];
+                cpp_argv[cpp_argc++]   = argv[i++];
+            }
             pass_argv[pass_argc++] = argv[i];
             cpp_argv[cpp_argc++]   = argv[i++];
         } else if (!strcmp(argv[i], "-MF") || !strcmp(argv[i], "-MT")) {
